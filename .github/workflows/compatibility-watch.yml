@@ -1,0 +1,121 @@
+name: Client compatibility watch
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  detect:
+    runs-on: windows-latest
+    outputs:
+      candidate: ${{ steps.version.outputs.candidate }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Detect published Windows client version
+        id: version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $response = Invoke-WebRequest -UseBasicParsing "https://www.leigod.com/download"
+          $match = [regex]::Match(
+            $response.Content,
+            'Windows</div>.*?版本\s*v(?<version>\d+(?:\.\d+){3})',
+            [System.Text.RegularExpressions.RegexOptions]::Singleline)
+          if (-not $match.Success) {
+            throw "Could not determine the published Windows client version."
+          }
+
+          $version = $match.Groups['version'].Value
+          $baseline = Get-Content compatibility/verified-client.json -Raw | ConvertFrom-Json
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+          if ($version -eq $baseline.version) {
+            "candidate=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          $title = "Compatibility check: Leigod v$version"
+          $issues = gh issue list --state all --limit 100 --json title | ConvertFrom-Json
+          if ($issues.title -contains $title) {
+            "candidate=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          $body = @"
+          The official download page now advertises Leigod for Windows v$version.
+
+          Verified baseline: v$($baseline.version)
+          Source: https://www.leigod.com/download
+
+          A candidate LeigodClean build is attached to this workflow run. Validate startup, game catalog and artwork, line selection, acceleration controls, tray behavior, and process monitoring before updating the verified baseline.
+          "@
+          gh issue create --title $title --body $body
+          "candidate=true" >> $env:GITHUB_OUTPUT
+
+  candidate-build:
+    needs: detect
+    if: needs.detect.outputs.candidate == 'true'
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Restore
+        run: dotnet restore LeigodClean.slnx
+
+      - name: Verify formatting
+        run: dotnet format LeigodClean.slnx --verify-no-changes --no-restore
+
+      - name: Verify runtime syntax
+        shell: pwsh
+        run: |
+          Get-ChildItem src/LeigodClean.Runtime -Recurse -Include *.js,*.cjs | ForEach-Object {
+            node --check $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Test runtime
+        run: node --test src/LeigodClean.Runtime/test/*.test.cjs
+
+      - name: Test launcher
+        run: dotnet test LeigodClean.slnx --configuration Release --no-restore
+
+      - name: Publish candidate
+        run: dotnet publish src/LeigodClean.Launcher/LeigodClean.Launcher.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore --output artifacts/win-x64
+
+      - name: Create checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash artifacts/win-x64/LeigodClean.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  LeigodClean.exe" | Set-Content artifacts/win-x64/LeigodClean.exe.sha256 -Encoding utf8NoBOM
+
+      - name: Upload compatibility candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: LeigodClean-candidate-for-${{ needs.detect.outputs.version }}
+          path: |
+            artifacts/win-x64/LeigodClean.exe
+            artifacts/win-x64/LeigodClean.exe.sha256
+          if-no-files-found: error
+          retention-days: 14

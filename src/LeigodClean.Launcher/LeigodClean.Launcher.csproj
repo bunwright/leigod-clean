@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <AssemblyName>LeigodClean</AssemblyName>
+    <RootNamespace>LeigodClean</RootNamespace>
+    <Version>0.1.0</Version>
+    <Authors>bunwright</Authors>
+    <Product>LeigodClean</Product>
+    <Description>Focused desktop interface and process-aware automation for Leigod on Windows.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/bunwright/leigod-clean</RepositoryUrl>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\LeigodClean.Runtime\assets\leigodclean.ico</ApplicationIcon>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifiers>win-x64;win-x86</RuntimeIdentifiers>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+    <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\LeigodClean.Runtime\main.cjs" LogicalName="Runtime/main.cjs" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\auto-acceleration.cjs" LogicalName="Runtime/auto-acceleration.cjs" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\monitor.cjs" LogicalName="Runtime/monitor.cjs" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\official-bridge.cjs" LogicalName="Runtime/official-bridge.cjs" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\preload.cjs" LogicalName="Runtime/preload.cjs" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\community-processes.json" LogicalName="Runtime/community-processes.json" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\product.json" LogicalName="Runtime/product.json" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\index.html" LogicalName="Runtime/renderer/index.html" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\styles.css" LogicalName="Runtime/renderer/styles.css" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\app.js" LogicalName="Runtime/renderer/app.js" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\assets\leigodclean.svg" LogicalName="Runtime/assets/leigodclean.svg" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\assets\leigodclean.png" LogicalName="Runtime/assets/leigodclean.png" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Restore
+        run: dotnet restore LeigodClean.slnx
+
+      - name: Verify formatting
+        run: dotnet format LeigodClean.slnx --verify-no-changes --no-restore
+
+      - name: Verify runtime syntax
+        shell: pwsh
+        run: |
+          Get-ChildItem src/LeigodClean.Runtime -Recurse -Include *.js,*.cjs | ForEach-Object {
+            node --check $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Test runtime
+        run: node --test src/LeigodClean.Runtime/test/*.test.cjs
+
+      - name: Build
+        run: dotnet build LeigodClean.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test LeigodClean.slnx --configuration Release --no-build
+
+      - name: Publish launcher
+        run: dotnet publish src/LeigodClean.Launcher/LeigodClean.Launcher.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore --output artifacts/win-x64
+
+      - name: Create checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash artifacts/win-x64/LeigodClean.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  LeigodClean.exe" | Set-Content artifacts/win-x64/LeigodClean.exe.sha256 -Encoding utf8NoBOM
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: LeigodClean-win-x64
+          path: |
+            artifacts/win-x64/LeigodClean.exe
+            artifacts/win-x64/LeigodClean.exe.sha256
+          if-no-files-found: error
+          retention-days: 14
