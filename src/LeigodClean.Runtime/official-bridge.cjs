@@ -66,12 +66,12 @@ function rankGames(games, priorities = {}) {
 }
 
 function installOfficialBridge(rankCatalog) {
-  if (window.__leigodCleanOfficial?.version === 3) {
+  if (window.__leigodCleanOfficial?.version === 4) {
     return true;
   }
 
   const runtime = {
-    version: 3,
+    version: 4,
     games: null,
     gameById: new Map(),
     recentGameIds: [],
@@ -394,6 +394,20 @@ function installOfficialBridge(rankCatalog) {
     });
   }
 
+  async function autoCandidates() {
+    const games = await loadGames();
+    await refreshGamePriorities().catch(() => {});
+    const visibleGameIds = new Set(games
+      .filter((game) => String(game.is_show_v11 ?? '1') !== '0')
+      .map((game) => String(toNumber(game.id, -1))));
+    return uniqueGameIds([
+      ...runtime.localGameIds,
+      ...runtime.recentGameIds,
+    ])
+      .filter((gameId) => gameId > 0 && visibleGameIds.has(String(gameId)))
+      .slice(0, 500);
+  }
+
   async function getGame(payload = {}) {
     const game = await getRawGame(payload.gameId);
     if (!game) {
@@ -607,12 +621,23 @@ function installOfficialBridge(rankCatalog) {
       Number(item.assignId) === Number(payload.assignId)) ??
       lines.find((item) => Number(item.lineId) === Number(payload.lineId)) ??
       lines[0];
-    return start({
+    const result = await start({
       gameId: payload.gameId,
       areaId: payload.areaId,
       subAreaId: payload.subAreaId,
       lineKey: line.key,
     }, { automatic: true });
+    return {
+      ...result,
+      selection: {
+        areaId: toNumber(payload.areaId, -1),
+        subAreaId: toNumber(payload.subAreaId, -1),
+        lineId: line.lineId,
+        assignId: line.assignId,
+        lineTitle: line.title,
+        lineMode: line.mode,
+      },
+    };
   }
 
   async function stop() {
@@ -687,6 +712,7 @@ function installOfficialBridge(rankCatalog) {
   }
 
   const methods = {
+    autoCandidates,
     autoStart,
     diagnostics,
     getGame,

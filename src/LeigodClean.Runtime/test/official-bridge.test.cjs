@@ -111,8 +111,8 @@ test('manual acceleration and account-time controls use independent official act
       { id: 1, title: 'Popular Game', game_type: 0, hot: 100 },
       { id: 42, title: 'Test Game', game_type: 0, hot: 0 },
     ]],
-    ['local_games', []],
-    ['recent_games', []],
+    ['local_games', [{ id: 1 }]],
+    ['recent_games', [{ id: '_', games: [42] }]],
   ]);
   const database = {
     objectStoreNames: { contains: (name) => stores.has(name) },
@@ -174,6 +174,10 @@ test('manual acceleration and account-time controls use independent official act
     };
 
     assert.equal(installOfficialBridge(rankGames), true);
+    assert.deepEqual(
+      await window.__leigodCleanOfficial.call('autoCandidates'),
+      [1, 42],
+    );
     const lines = await window.__leigodCleanOfficial.call('getLines', {
       gameId: 42,
       areaId: 3,
@@ -193,6 +197,26 @@ test('manual acceleration and account-time controls use independent official act
       'start-acceleration',
     ]);
     assert.equal(started.state.gameId, 42);
+
+    events.length = 0;
+    acc.accInfo = { accStatus: 'normal', game_id: 0 };
+    user.userTimeInfo.timeStatus = 'timeing';
+    const automatic = await window.__leigodCleanOfficial.call('autoStart', {
+      gameId: 42,
+      areaId: 3,
+      subAreaId: -1,
+      lineId: -1,
+      assignId: -1,
+    });
+    assert.deepEqual(events, ['record-line', 'start-acceleration']);
+    assert.deepEqual(automatic.selection, {
+      areaId: 3,
+      subAreaId: -1,
+      lineId: 1,
+      assignId: 100,
+      lineTitle: 'Test Line 1',
+      lineMode: '智能模式',
+    });
 
     events.length = 0;
     acc.accInfo = { accStatus: 'normal', game_id: 0 };

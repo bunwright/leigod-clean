@@ -4,7 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   completeAutoWatchAttempt,
+  defaultAutoSelection,
   evaluateAutoWatchState,
+  resolveAutoGameIds,
 } = require('../auto-acceleration.cjs');
 
 const idleContext = Object.freeze({
@@ -63,4 +65,30 @@ test('waits for login without consuming the process trigger', () => {
   assert.equal(loggedOut.shouldStart, false);
   assert.equal(loggedOut.state.latched, false);
   assert.equal(evaluateAutoWatchState(loggedOut.state, idleContext, 2000).shouldStart, true);
+});
+
+test('dedicated game switches remain active when the global switch is off', () => {
+  assert.deepEqual(resolveAutoGameIds({
+    autoAccelerationEnabled: false,
+    autoAccelerateGames: { 42: true, 43: false },
+    gameSelections: { 99: { areaId: 1 } },
+  }, [100]), ['42']);
+});
+
+test('the global switch covers configured, local, and recent games', () => {
+  assert.deepEqual(resolveAutoGameIds({
+    autoAccelerationEnabled: true,
+    autoAccelerateGames: { 42: true },
+    gameSelections: { 43: { areaId: 1 }, invalid: {} },
+  }, [{ id: 44 }, 45, '43', 0, 'invalid']), ['42', '43', '44', '45']);
+});
+
+test('a global candidate can use the first playable area and sub-area', () => {
+  assert.deepEqual(defaultAutoSelection({
+    areas: [
+      { id: 'invalid', subAreas: [] },
+      { id: 8, subAreas: [{ id: 9 }] },
+    ],
+  }), { areaId: 8, subAreaId: 9, lineId: -1, assignId: -1 });
+  assert.equal(defaultAutoSelection({ areas: [] }), null);
 });

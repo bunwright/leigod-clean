@@ -24,7 +24,9 @@ module.exports = function startLeigodClean(officialRequire) {
   const path = require('node:path');
   const {
     completeAutoWatchAttempt,
+    defaultAutoSelection,
     evaluateAutoWatchState,
+    resolveAutoGameIds,
   } = require('./auto-acceleration.cjs');
   const { OfficialBridge } = require('./official-bridge.cjs');
   const {
@@ -91,6 +93,8 @@ module.exports = function startLeigodClean(officialRequire) {
   let autoPauseInProgress = false;
   let autoStartBusy = false;
   let autoWatcherPolling = false;
+  let autoCandidateIds = [];
+  let autoCandidatesLoadedAt = 0;
   const autoGameCache = new Map();
   const autoWatchStates = new Map();
   let lastOfficialState = {
@@ -399,10 +403,6 @@ module.exports = function startLeigodClean(officialRequire) {
     if (!cleanWindow || cleanWindow.isDestroyed()) {
       return false;
     }
-    const enabled = !open;
-    cleanWindow.setMinimizable(enabled);
-    cleanWindow.setMaximizable(enabled);
-    cleanWindow.setClosable(enabled);
     if (typeof cleanWindow.setTitleBarOverlay === 'function') {
       cleanWindow.setTitleBarOverlay({
         ...(open ? modalTitleBarOverlay : normalTitleBarOverlay),
@@ -593,11 +593,10 @@ module.exports = function startLeigodClean(officialRequire) {
         }
         saveSettings();
         autoGameCache.clear();
-        if (!settings.autoAccelerationEnabled) {
-          autoWatchStates.clear();
-        } else {
-          void pollAutoAcceleration();
-        }
+        autoCandidateIds = [];
+        autoCandidatesLoadedAt = 0;
+        autoWatchStates.clear();
+        void pollAutoAcceleration();
         if (!settings.autoPauseEnabled) {
           monitor.stop('automatic-pause-disabled');
         } else if (lastOfficialState.gameId && lastOfficialState.accStatus !== 'normal') {
@@ -624,9 +623,7 @@ module.exports = function startLeigodClean(officialRequire) {
         autoGameCache.delete(gameId);
         autoWatchStates.delete(gameId);
         saveSettings();
-        if (enabled) {
-          void pollAutoAcceleration();
-        }
+        void pollAutoAcceleration();
         return publicSettings();
       }
       case 'rememberSelection': {
@@ -634,6 +631,10 @@ module.exports = function startLeigodClean(officialRequire) {
         const selection = normalizeGameSelection(payload);
         settings.gameSelections = { ...settings.gameSelections, [gameId]: selection };
         saveSettings();
+        if (settings.autoAccelerationEnabled) {
+          autoWatchStates.delete(gameId);
+          void pollAutoAcceleration();
+        }
         return selection;
       }
       case 'setModalOpen':
@@ -702,15 +703,25 @@ module.exports = function startLeigodClean(officialRequire) {
   }
 
   async function pollAutoAcceleration() {
-    if (autoWatcherPolling || autoStartBusy || !settings.autoAccelerationEnabled ||
+    const dedicatedGameIds = resolveAutoGameIds(settings);
+    const hasGlobalTargets = settings.autoAccelerationEnabled === true;
+    if (autoWatcherPolling || autoStartBusy || (!hasGlobalTargets && dedicatedGameIds.length === 0) ||
       !lastOfficialState.ready || !win32Addon?.isProcessRunning) {
       return;
     }
     autoWatcherPolling = true;
     try {
-      const gameIds = Object.entries(settings.autoAccelerateGames)
-        .filter(([, enabled]) => enabled === true)
-        .map(([gameId]) => gameId);
+      if (hasGlobalTargets && Date.now() - autoCandidatesLoadedAt >= 5000) {
+        try {
+          const discovered = await bridge.call('autoCandidates');
+          autoCandidateIds = Array.isArray(discovered) ? discovered : [];
+        } catch (error) {
+          log(`Global automatic acceleration discovery failed: ${messageOf(error)}`);
+        } finally {
+          autoCandidatesLoadedAt = Date.now();
+        }
+      }
+      const gameIds = resolveAutoGameIds(settings, autoCandidateIds);
       for (const gameId of gameIds) {
         try {
           const game = await getAutoGame(gameId);
@@ -727,7 +738,7 @@ module.exports = function startLeigodClean(officialRequire) {
           watchState = evaluation.state;
           autoWatchStates.set(gameId, watchState);
           if (evaluation.shouldStart) {
-            const started = await triggerAutoAcceleration(gameId, game.title);
+            const started = await triggerAutoAcceleration(gameId, game);
             autoWatchStates.set(gameId, completeAutoWatchAttempt(watchState, started));
             break;
           }
@@ -750,22 +761,30 @@ module.exports = function startLeigodClean(officialRequire) {
     const resolved = {
       title: game.title,
       processes: resolveProcesses(gameId, game.processes),
+      areas: Array.isArray(game.areas) ? game.areas : [],
     };
     autoGameCache.set(gameId, resolved);
     return resolved;
   }
 
-  async function triggerAutoAcceleration(gameId, gameTitle) {
-    const selection = settings.gameSelections[gameId];
+  async function triggerAutoAcceleration(gameId, game) {
+    const selection = settings.gameSelections[gameId] ?? defaultAutoSelection(game);
     if (!selection) {
-      log(`Automatic acceleration skipped for game ${gameId}: selection missing`);
-      return;
+      log(`Automatic acceleration skipped for game ${gameId}: no playable area`);
+      return false;
     }
     autoStartBusy = true;
     pendingStartUntil = Date.now() + 30000;
     try {
       log(`Automatic acceleration triggered for game ${gameId}`);
       const result = await bridge.call('autoStart', { gameId: numericId(gameId), ...selection });
+      if (result?.selection) {
+        settings.gameSelections = {
+          ...settings.gameSelections,
+          [gameId]: normalizeGameSelection(result.selection),
+        };
+        saveSettings();
+      }
       if (result?.state) {
         acceptOfficialState(result.state);
       }
@@ -774,7 +793,7 @@ module.exports = function startLeigodClean(officialRequire) {
       } else if (settings.notificationsEnabled && Notification.isSupported()) {
         new Notification({
           title: 'LeigodClean',
-          body: `已检测到 ${gameTitle}，正在自动加速。`,
+          body: `已检测到 ${game.title}，正在自动加速。`,
           icon: appIcon,
           silent: true,
         }).show();

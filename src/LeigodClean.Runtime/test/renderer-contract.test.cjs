@@ -99,15 +99,27 @@ test('acceleration state belongs to one game and active games are promoted visib
   assert.match(mainRuntime, /return combinedState\(\);/u);
 });
 
-test('modal dialogs dim and disable the native Windows title-bar controls', () => {
+test('modal dialogs dim native controls without mutating Windows button capabilities', () => {
   assert.match(preload, /setModalOpen/u);
   assert.match(mainRuntime, /setCleanModalOpen\(open\)/u);
-  assert.match(mainRuntime, /setMinimizable\(enabled\)/u);
-  assert.match(mainRuntime, /setMaximizable\(enabled\)/u);
-  assert.match(mainRuntime, /setClosable\(enabled\)/u);
+  assert.doesNotMatch(mainRuntime, /setMinimizable\(/u);
+  assert.doesNotMatch(mainRuntime, /setMaximizable\(/u);
+  assert.doesNotMatch(mainRuntime, /setClosable\(/u);
   assert.match(mainRuntime, /modalTitleBarOverlay/u);
   assert.match(script, /addEventListener\('close', syncModalPresentation\)/u);
   assert.match(styles, /backdrop-filter:\s*blur\(7px\) saturate\(\.82\)/u);
+});
+
+test('global and per-game automatic acceleration rules are independent', () => {
+  assert.match(html, /所有游戏自动加速/u);
+  assert.match(html, /单独启用的游戏不受此开关影响/u);
+  assert.match(script, /关闭全局开关后仍然生效/u);
+  assert.match(mainRuntime, /resolveAutoGameIds\(settings, autoCandidateIds\)/u);
+  assert.match(mainRuntime, /bridge\.call\('autoCandidates'\)/u);
+  assert.doesNotMatch(
+    mainRuntime,
+    /autoWatcherPolling \|\| autoStartBusy \|\| !settings\.autoAccelerationEnabled/u,
+  );
 });
 
 test('game configuration uses accessible custom pickers and exposes monitored processes', () => {

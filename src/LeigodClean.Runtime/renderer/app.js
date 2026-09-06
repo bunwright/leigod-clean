@@ -654,19 +654,25 @@ async function rememberSelection() {
 
 function renderGameAutoAcceleration() {
   const gameId = String(model.selectedGame?.id ?? '');
-  const enabled = Boolean(model.settings?.autoAccelerateGames?.[gameId]);
+  const dedicatedEnabled = Boolean(model.settings?.autoAccelerateGames?.[gameId]);
   const hasSelection = Boolean(
     model.lines.find((item) => item.key === elements.lineSelect.value) || selectedPreference(),
   );
   const globalEnabled = model.settings?.autoAccelerationEnabled === true;
-  elements.gameAutoInput.checked = enabled;
-  elements.gameAutoInput.disabled = !hasSelection && !enabled;
-  elements.gameAutoOption.classList.toggle('enabled', enabled);
-  elements.gameAutoHint.textContent = !hasSelection
-    ? '选择线路后可为当前游戏开启'
-    : !globalEnabled
-      ? enabled ? '已为当前游戏启用；全局功能目前关闭' : '全局自动加速目前关闭'
-      : enabled ? '进程出现后将按上次配置自动加速' : '使用当前区服和线路作为自动配置';
+  elements.gameAutoInput.checked = dedicatedEnabled;
+  elements.gameAutoInput.disabled = !hasSelection && !dedicatedEnabled;
+  elements.gameAutoOption.classList.toggle('enabled', dedicatedEnabled || globalEnabled);
+  if (dedicatedEnabled) {
+    elements.gameAutoHint.textContent = '已单独启用，关闭全局开关后仍然生效';
+  } else if (globalEnabled) {
+    elements.gameAutoHint.textContent = hasSelection
+      ? '已由所有游戏自动加速覆盖；单独开启可永久保留'
+      : '本地或近期游戏将自动匹配可用线路';
+  } else {
+    elements.gameAutoHint.textContent = hasSelection
+      ? '单独开启后不受全局开关影响'
+      : '选择线路后可为当前游戏单独开启';
+  }
 }
 
 async function setGameAutoAcceleration() {
