@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https: http: cache-img:; connect-src 'none'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>LeigodClean</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <header class="sidebar-header drag-region">
+          <div class="brand-row">
+            <div class="brand-mark" aria-hidden="true">
+              <img src="../assets/leigodclean.svg" alt="">
+            </div>
+            <div class="brand-name">LeigodClean</div>
+          </div>
+        </header>
+
+        <div class="list-heading">
+          <span>游戏</span>
+          <span id="gameCount">—</span>
+        </div>
+        <div class="game-list" id="gameList" role="listbox" aria-label="游戏列表"></div>
+
+        <footer class="sidebar-footer">
+          <button class="account-card" id="accountButton" type="button" hidden>
+            <span class="account-avatar" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 12.2a4.1 4.1 0 1 0 0-8.2 4.1 4.1 0 0 0 0 8.2Zm7 7.8a7 7 0 0 0-14 0"/></svg>
+            </span>
+            <span class="account-copy">
+              <strong id="accountName"></strong>
+              <small id="accountStatus"></small>
+            </span>
+            <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+        </footer>
+      </aside>
+
+      <main class="main-panel">
+        <header class="toolbar drag-region">
+          <div class="search-wrap toolbar-search no-drag">
+            <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m20 20-4.5-4.5m2.4-5.4a7.8 7.8 0 1 1-15.6 0 7.8 7.8 0 0 1 15.6 0Z"/></svg>
+            <input id="searchInput" type="search" maxlength="100" autocomplete="off" placeholder="搜索游戏">
+            <div class="search-spinner" id="searchSpinner" hidden aria-label="正在搜索"></div>
+          </div>
+          <div class="toolbar-actions no-drag">
+            <div class="time-overview" id="timeOverview" hidden>
+              <svg class="time-overview-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              <span class="time-overview-copy">
+                <small id="timeStatusLabel">已暂停</small>
+                <strong id="toolbarTimeLeft">—</strong>
+              </span>
+              <button class="time-toggle-button" id="timeToggleButton" type="button">
+                <span class="time-button-spinner" id="timeButtonSpinner" hidden></span>
+                <svg id="timePauseIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6v12m6-12v12"/></svg>
+                <svg id="timeResumeIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="m9 6 9 6-9 6V6Z"/></svg>
+                <span id="timeToggleText">暂停</span>
+              </button>
+            </div>
+            <button class="icon-button" id="aboutButton" type="button" aria-label="关于 LeigodClean" title="关于">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+            </button>
+            <button class="icon-button" id="settingsButton" type="button" aria-label="设置" title="设置">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="content" id="content">
+          <section class="center-state" id="loadingState" role="status" aria-label="正在加载">
+            <div class="large-spinner" aria-hidden="true"></div>
+          </section>
+
+          <section class="center-state" id="emptyState" hidden>
+            <div class="state-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M7 7h10v10H7zM4 9V5a1 1 0 0 1 1-1h4m6 0h4a1 1 0 0 1 1 1v4m0 6v4a1 1 0 0 1-1 1h-4m-6 0H5a1 1 0 0 1-1-1v-4"/></svg>
+            </div>
+            <h1>选择一个游戏</h1>
+            <p>从左侧目录搜索游戏，然后选择区服和线路。</p>
+          </section>
+
+          <section class="workspace" id="workspace" hidden>
+            <article class="hero-card">
+              <div class="game-art-wrap">
+                <img class="game-art" id="gameArtwork" alt="">
+                <div class="game-art-placeholder" id="gameArtworkPlaceholder" aria-hidden="true">LC</div>
+              </div>
+              <div class="hero-copy">
+                <div class="eyebrow">已选择游戏</div>
+                <h1 id="gameTitle">—</h1>
+                <p id="gameSubtitle">选择区服与线路后开始加速。</p>
+                <div class="tag-row">
+                  <span class="soft-tag" id="gameIdTag">ID —</span>
+                  <span class="soft-tag" id="processTag">正在读取进程</span>
+                </div>
+              </div>
+              <div class="session-badge" id="sessionBadge">
+                <span class="session-orb"></span>
+                <div>
+                  <small>会话状态</small>
+                  <strong id="sessionStatus">未加速</strong>
+                </div>
+              </div>
+            </article>
+
+            <div class="workspace-grid">
+              <article class="panel configuration-panel">
+                <div class="panel-header">
+                  <div>
+                    <h2>加速配置</h2>
+                    <p>线路数据由官方客户端实时提供</p>
+                  </div>
+                  <button class="text-button" id="refreshLinesButton" type="button">刷新线路</button>
+                </div>
+
+                <div class="field-grid">
+                  <div class="field">
+                    <span class="field-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>区服</span>
+                    <div class="choice-picker" id="areaPicker">
+                      <select class="native-choice" id="areaSelect" aria-hidden="true" tabindex="-1"></select>
+                      <button class="choice-trigger" id="areaPickerButton" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="areaPickerMenu">
+                        <span class="choice-trigger-copy"><strong id="areaPickerValue">选择区服</strong><small id="areaPickerMeta"></small></span>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg>
+                      </button>
+                      <div class="choice-menu" id="areaPickerMenu" role="listbox" aria-label="区服" hidden></div>
+                    </div>
+                  </div>
+                  <div class="field" id="subAreaField" hidden>
+                    <span class="field-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h6v6H5zM13 13h6v6h-6zM14 5h5M5 14v5h5"/></svg>子区服</span>
+                    <div class="choice-picker" id="subAreaPicker">
+                      <select class="native-choice" id="subAreaSelect" aria-hidden="true" tabindex="-1"></select>
+                      <button class="choice-trigger" id="subAreaPickerButton" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="subAreaPickerMenu">
+                        <span class="choice-trigger-copy"><strong id="subAreaPickerValue">选择子区服</strong><small id="subAreaPickerMeta"></small></span>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg>
+                      </button>
+                      <div class="choice-menu" id="subAreaPickerMenu" role="listbox" aria-label="子区服" hidden></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="field line-field">
+                  <span class="field-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 17h3l2-5 3 3 2-7 4 3"/></svg>线路</span>
+                  <div class="choice-picker wide-picker" id="linePicker">
+                    <select class="native-choice" id="lineSelect" aria-hidden="true" tabindex="-1"></select>
+                    <button class="choice-trigger" id="linePickerButton" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="linePickerMenu">
+                      <span class="choice-trigger-copy"><strong id="linePickerValue">选择线路</strong><small id="linePickerMeta"></small></span>
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg>
+                    </button>
+                    <div class="choice-menu rich-choice-menu" id="linePickerMenu" role="listbox" aria-label="线路" hidden></div>
+                  </div>
+                </div>
+                <div class="line-hint" id="lineHint">选择区服后获取可用线路</div>
+
+                <div class="game-auto-option" id="gameAutoOption">
+                  <span class="game-auto-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M5 14a7 7 0 1 1 14 0v4H5v-4Zm4-10 3-2 3 2M9 18v2m6-2v2"/></svg>
+                  </span>
+                  <span class="game-auto-copy">
+                    <strong>检测到游戏时自动加速</strong>
+                    <small id="gameAutoHint">选择线路后可为当前游戏开启</small>
+                  </span>
+                  <label class="switch game-auto-switch">
+                    <input id="gameAutoInput" type="checkbox" aria-label="当前游戏自动加速">
+                    <span></span>
+                  </label>
+                </div>
+
+                <button class="primary-button" id="startButton" type="button" disabled>
+                  <span class="button-spinner" id="startSpinner" hidden></span>
+                  <svg id="startIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="m13.4 2.5-7.6 10.5h5.1l-.6 8.5L18.2 11h-5.1l.3-8.5Z"/></svg>
+                  <svg id="stopIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
+                  <strong id="startButtonText">一键加速</strong>
+                </button>
+              </article>
+
+              <article class="panel session-panel">
+                <div class="panel-header">
+                  <div>
+                    <h2>运行状态</h2>
+                    <p id="monitorDescription">等待开始加速</p>
+                  </div>
+                  <span class="monitor-chip" id="monitorChip">空闲</span>
+                </div>
+
+                <div class="metric-grid">
+                  <div class="metric primary-metric">
+                    <small>加速时长</small>
+                    <strong id="durationMetric">00:00:00</strong>
+                  </div>
+                  <div class="metric">
+                    <small>线路延迟</small>
+                    <strong id="delayMetric">—</strong>
+                  </div>
+                  <div class="metric">
+                    <small>丢包</small>
+                    <strong id="lossMetric">—</strong>
+                  </div>
+                </div>
+
+                <div class="monitor-detail">
+                  <span class="monitor-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M4 12h3l2-5 4 10 2-5h5"/></svg>
+                  </span>
+                  <div>
+                    <strong id="monitorTitle">自动暂停待命</strong>
+                    <p id="monitorDetail">开始加速后将自动检测游戏进程。</p>
+                  </div>
+                </div>
+
+                <div class="process-overview">
+                  <div class="process-overview-heading">
+                    <span class="process-overview-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>
+                    </span>
+                    <span>
+                      <strong>监控进程</strong>
+                      <small id="processSummary">选择游戏后显示</small>
+                    </span>
+                  </div>
+                  <div class="process-chip-list" id="processList"></div>
+                </div>
+              </article>
+            </div>
+
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <dialog class="settings-dialog about-dialog" id="aboutDialog" aria-labelledby="aboutTitle">
+      <div class="about-content">
+        <header class="dialog-header">
+          <div>
+            <h2 id="aboutTitle">关于 LeigodClean</h2>
+            <p>应用与运行环境信息</p>
+          </div>
+          <button class="icon-button dialog-close" id="aboutCloseButton" type="button" aria-label="关闭">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          </button>
+        </header>
+        <div class="about-hero">
+          <div class="about-mark" aria-hidden="true">
+            <img src="../assets/leigodclean.svg" alt="">
+          </div>
+          <div>
+            <strong id="aboutName">LeigodClean</strong>
+            <p id="aboutDescription">简洁的雷神加速控制界面。</p>
+          </div>
+        </div>
+        <dl class="about-facts">
+          <div><dt>LeigodClean 版本</dt><dd id="aboutVersion">—</dd></div>
+          <div><dt>官方客户端版本</dt><dd id="aboutOfficialVersion">—</dd></div>
+          <div><dt>版本日期</dt><dd id="aboutVersionDate">—</dd></div>
+          <div><dt>本次启动</dt><dd id="aboutStartedAt">—</dd></div>
+          <div><dt>运行环境</dt><dd id="aboutEnvironment">—</dd></div>
+        </dl>
+        <p class="about-license">© 2026 bunwright · MIT License</p>
+        <footer class="dialog-footer">
+          <button class="primary-small-button" id="aboutDoneButton" type="button">完成</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog class="settings-dialog" id="settingsDialog" aria-labelledby="settingsTitle">
+      <form method="dialog" id="settingsForm">
+        <header class="dialog-header">
+          <div>
+            <h2 id="settingsTitle">偏好设置</h2>
+            <p>自动化、后台运行与进程识别</p>
+          </div>
+          <button class="icon-button dialog-close" id="settingsCloseButton" type="button" aria-label="关闭">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
+          </button>
+        </header>
+
+        <div class="dialog-section">
+          <h3>自动化</h3>
+          <div class="settings-row switch-row">
+            <label for="autoAccelerationInput">
+              <strong>自动加速</strong>
+              <small>检测到已启用游戏的进程时自动恢复并加速</small>
+            </label>
+            <label class="switch"><input id="autoAccelerationInput" type="checkbox"><span></span></label>
+          </div>
+          <div class="settings-row switch-row">
+            <label for="autoPauseInput">
+              <strong>自动暂停</strong>
+              <small>游戏进程结束后自动停止加速并暂停时长</small>
+            </label>
+            <label class="switch"><input id="autoPauseInput" type="checkbox"><span></span></label>
+          </div>
+          <div class="settings-row switch-row">
+            <label for="launchAtLoginInput">
+              <strong>开机启动</strong>
+              <small>登录 Windows 后在系统托盘中启动</small>
+            </label>
+            <label class="switch"><input id="launchAtLoginInput" type="checkbox"><span></span></label>
+          </div>
+          <div class="settings-row switch-row">
+            <label for="minimizeToTrayInput">
+              <strong>最小化到系统托盘</strong>
+              <small>最小化时隐藏任务栏窗口并保持后台运行</small>
+            </label>
+            <label class="switch"><input id="minimizeToTrayInput" type="checkbox"><span></span></label>
+          </div>
+          <div class="settings-row switch-row">
+            <label for="pauseOnCloseInput">
+              <strong>关闭时暂停</strong>
+              <small>退出 LeigodClean 时安全结束当前会话</small>
+            </label>
+            <label class="switch"><input id="pauseOnCloseInput" type="checkbox"><span></span></label>
+          </div>
+          <div class="settings-row switch-row">
+            <label for="notificationsInput">
+              <strong>系统通知</strong>
+              <small>自动加速、自动暂停或失败时显示 Windows 通知</small>
+            </label>
+            <label class="switch"><input id="notificationsInput" type="checkbox"><span></span></label>
+          </div>
+        </div>
+
+        <div class="dialog-section">
+          <h3>时间</h3>
+          <div class="settings-row">
+            <label for="startupTimeoutInput">
+              <strong>启动等待</strong>
+              <small>加速后等待首个游戏进程出现</small>
+            </label>
+            <span class="number-field"><input id="startupTimeoutInput" type="number" min="1" max="60" step="1"><em>分钟</em></span>
+          </div>
+          <div class="settings-row">
+            <label for="graceInput">
+              <strong>退出宽限</strong>
+              <small>进程全部退出后继续等待接力或重启</small>
+            </label>
+            <span class="number-field"><input id="graceInput" type="number" min="0.25" max="60" step="0.25"><em>分钟</em></span>
+          </div>
+        </div>
+
+        <div class="dialog-section">
+          <h3>当前游戏进程</h3>
+          <label class="process-editor">
+            <span id="processEditorLabel">请先选择游戏</span>
+            <textarea id="processOverrideInput" rows="4" placeholder="Game.exe, Launcher.exe" disabled></textarea>
+          </label>
+          <p class="field-help">留空时使用内置目录或官方游戏库；多个进程以逗号或换行分隔。</p>
+        </div>
+
+        <div class="dialog-tools">
+          <button class="link-button" id="openLogsButton" type="button">打开日志</button>
+          <button class="link-button" id="copyDiagnosticsButton" type="button">复制诊断信息</button>
+        </div>
+        <div class="official-fallback">
+          <div>
+            <strong>官方客户端界面</strong>
+            <small id="officialClientDescription">登录或使用 LeigodClean 未提供的功能</small>
+          </div>
+          <button class="secondary-button" id="settingsOfficialButton" type="button">打开</button>
+        </div>
+        <footer class="dialog-footer">
+          <button class="secondary-button" id="settingsCancelButton" type="button">取消</button>
+          <button class="primary-small-button" id="saveSettingsButton" type="submit">保存</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden>
+      <span class="toast-icon" id="toastIcon">✓</span>
+      <span id="toastText"></span>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

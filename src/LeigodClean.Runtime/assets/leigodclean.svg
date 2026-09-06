@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">LeigodClean</title>
+  <desc id="description">A clean C-shaped orbit surrounding an electric bolt.</desc>
+  <defs>
+    <linearGradient id="background" x1="92" y1="54" x2="420" y2="458" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#202c43"/>
+      <stop offset="0.55" stop-color="#111a2a"/>
+      <stop offset="1" stop-color="#090e18"/>
+    </linearGradient>
+    <linearGradient id="orbit" x1="101" y1="111" x2="371" y2="405" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dce8f8"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="327" y1="84" x2="220" y2="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffc35a"/>
+      <stop offset="0.52" stop-color="#ff8a36"/>
+      <stop offset="1" stop-color="#ff5c35"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="70" y1="32" x2="442" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff" stop-opacity="0.24"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.18"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000000" flood-opacity="0.34"/>
+    </filter>
+    <filter id="bolt-shadow" x="-40%" y="-30%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#ff6a2c" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#background)"/>
+    <rect x="25" y="25" width="462" height="462" rx="111" fill="none" stroke="url(#rim)" stroke-width="2"/>
+  </g>
+
+  <path
+    d="M356 139C324 107 281 88 234 88C138 88 68 162 68 256C68 350 138 424 234 424C281 424 324 405 356 373"
+    fill="none"
+    stroke="url(#orbit)"
+    stroke-linecap="round"
+    stroke-width="62"
+  />
+
+  <path
+    d="M315 76L170 271H247L218 436L374 215H294L315 76Z"
+    fill="url(#bolt)"
+    filter="url(#bolt-shadow)"
+  />
+  <path d="M310 100L196 253H271L247 388L348 234H271L310 100Z" fill="#ffffff" fill-opacity="0.12"/>
+</svg>
