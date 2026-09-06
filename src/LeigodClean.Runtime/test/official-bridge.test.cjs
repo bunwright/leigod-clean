@@ -79,6 +79,8 @@ test('manual acceleration and account-time controls use independent official act
       .map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]),
   );
   const events = [];
+  const originalDateNow = Date.now;
+  let now = 1_000;
   const user = {
     isLogin: true,
     accountToken: 'test-token',
@@ -93,8 +95,9 @@ test('manual acceleration and account-time controls use independent official act
     recordManualLineSelect() {
       events.push('record-line');
     },
-    async startAcc() {
+    async startAcc(payload) {
       events.push('start-acceleration');
+      this.accInfo = { accStatus: 'speeding', game_id: payload.game_id };
     },
     async stopAcc() {
       events.push('stop-acceleration');
@@ -104,7 +107,10 @@ test('manual acceleration and account-time controls use independent official act
   };
   const pinia = { _s: new Map([['user', user], ['acc', acc]]) };
   const stores = new Map([
-    ['game_list', [{ id: 42, title: 'Test Game', game_type: 0 }]],
+    ['game_list', [
+      { id: 1, title: 'Popular Game', game_type: 0, hot: 100 },
+      { id: 42, title: 'Test Game', game_type: 0, hot: 0 },
+    ]],
     ['local_games', []],
     ['recent_games', []],
   ]);
@@ -130,6 +136,7 @@ test('manual acceleration and account-time controls use independent official act
   };
 
   try {
+    Date.now = () => now;
     globalThis.Element = class {};
     globalThis.document = {
       querySelector: (selector) => selector === '#app'
@@ -173,7 +180,7 @@ test('manual acceleration and account-time controls use independent official act
       subAreaId: -1,
     });
     assert.equal(lines.length, 3005);
-    await window.__leigodCleanOfficial.call('start', {
+    const started = await window.__leigodCleanOfficial.call('start', {
       gameId: 42,
       areaId: 3,
       subAreaId: -1,
@@ -185,6 +192,28 @@ test('manual acceleration and account-time controls use independent official act
       'record-line',
       'start-acceleration',
     ]);
+    assert.equal(started.state.gameId, 42);
+
+    events.length = 0;
+    acc.accInfo = { accStatus: 'normal', game_id: 0 };
+    now += 6_000;
+    const ranked = await window.__leigodCleanOfficial.call('searchGames');
+    assert.deepEqual(ranked.map((game) => game.id), [42, 1]);
+
+    acc.accInfo = { accStatus: 'speeding', game_id: 99 };
+    user.userTimeInfo.timeStatus = 'timeing';
+    const switched = await window.__leigodCleanOfficial.call('start', {
+      gameId: 42,
+      areaId: 3,
+      subAreaId: -1,
+      lineKey: lines[0].key,
+    });
+    assert.deepEqual(events, [
+      'stop-acceleration',
+      'record-line',
+      'start-acceleration',
+    ]);
+    assert.equal(switched.state.gameId, 42);
 
     events.length = 0;
     acc.accInfo = { accStatus: 'speeding', game_id: 42 };
@@ -202,6 +231,7 @@ test('manual acceleration and account-time controls use independent official act
     await window.__leigodCleanOfficial.call('resume');
     assert.deepEqual(events, ['time:resume:other']);
   } finally {
+    Date.now = originalDateNow;
     for (const [name, descriptor] of originalGlobals) {
       if (descriptor) {
         Object.defineProperty(globalThis, name, descriptor);

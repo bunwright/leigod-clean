@@ -254,6 +254,29 @@ svg {
   border-radius: 9px;
 }
 
+.game-thumb-wrap {
+  position: relative;
+  display: block;
+  width: 38px;
+  height: 38px;
+}
+
+.game-active-indicator {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 11px;
+  height: 11px;
+  background: var(--green);
+  border: 2px solid var(--sidebar);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(35, 165, 90, .13), 0 1px 4px rgba(24, 118, 65, .28);
+}
+
+.game-item.selected .game-active-indicator {
+  border-color: white;
+}
+
 .game-thumb {
   object-fit: cover;
   background: #e5e5e7;
@@ -1409,8 +1432,8 @@ svg {
 }
 
 .settings-dialog::backdrop {
-  background: rgba(20, 20, 22, .25);
-  backdrop-filter: blur(4px);
+  background: rgba(20, 20, 22, .3);
+  backdrop-filter: blur(7px) saturate(.82);
 }
 
 .settings-dialog form {

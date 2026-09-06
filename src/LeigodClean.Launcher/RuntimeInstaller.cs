@@ -16,6 +16,7 @@ internal static class RuntimeInstaller
         "product.json",
         "renderer/index.html",
         "renderer/styles.css",
+        "renderer/view-state.js",
         "renderer/app.js",
         "assets/leigodclean.svg",
         "assets/leigodclean.png",

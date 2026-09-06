@@ -99,6 +99,16 @@ module.exports = function startLeigodClean(officialRequire) {
     accStatus: 'normal',
     gameId: 0,
   };
+  const normalTitleBarOverlay = Object.freeze({
+    color: '#F7F7F8',
+    symbolColor: '#3A3A3D',
+    height: 62,
+  });
+  const modalTitleBarOverlay = Object.freeze({
+    color: '#C4C4C6',
+    symbolColor: '#77777C',
+    height: 62,
+  });
 
   prepareLog();
   log(`LeigodClean runtime starting; client=${officialClientVersion}`);
@@ -314,11 +324,7 @@ module.exports = function startLeigodClean(officialRequire) {
         show: false,
         frame: true,
         titleBarStyle: 'hidden',
-        titleBarOverlay: {
-          color: '#F7F7F8',
-          symbolColor: '#3A3A3D',
-          height: 62,
-        },
+        titleBarOverlay: { ...normalTitleBarOverlay },
         backgroundColor: '#F5F5F7',
         roundedCorners: true,
         thickFrame: true,
@@ -387,6 +393,22 @@ module.exports = function startLeigodClean(officialRequire) {
       cleanWindow = null;
     });
     void cleanWindow.loadFile(path.join(runtimeRoot, 'renderer', 'index.html'));
+  }
+
+  function setCleanModalOpen(open) {
+    if (!cleanWindow || cleanWindow.isDestroyed()) {
+      return false;
+    }
+    const enabled = !open;
+    cleanWindow.setMinimizable(enabled);
+    cleanWindow.setMaximizable(enabled);
+    cleanWindow.setClosable(enabled);
+    if (typeof cleanWindow.setTitleBarOverlay === 'function') {
+      cleanWindow.setTitleBarOverlay({
+        ...(open ? modalTitleBarOverlay : normalTitleBarOverlay),
+      });
+    }
+    return true;
   }
 
   function createTray() {
@@ -530,7 +552,10 @@ module.exports = function startLeigodClean(officialRequire) {
         if (result?.needsAttention) {
           showOfficialWindow();
         }
-        return result;
+        if (result?.state) {
+          acceptOfficialState(result.state);
+        }
+        return combinedState();
       }
       case 'stopAcceleration': {
         monitoredGameId = '';
@@ -611,6 +636,8 @@ module.exports = function startLeigodClean(officialRequire) {
         saveSettings();
         return selection;
       }
+      case 'setModalOpen':
+        return setCleanModalOpen(Boolean(payload.open));
       case 'openLogs':
         shell.showItemInFolder(logPath);
         return true;
@@ -739,6 +766,9 @@ module.exports = function startLeigodClean(officialRequire) {
     try {
       log(`Automatic acceleration triggered for game ${gameId}`);
       const result = await bridge.call('autoStart', { gameId: numericId(gameId), ...selection });
+      if (result?.state) {
+        acceptOfficialState(result.state);
+      }
       if (result?.needsAttention) {
         showOfficialWindow();
       } else if (settings.notificationsEnabled && Notification.isSupported()) {

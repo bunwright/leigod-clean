@@ -5,7 +5,7 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <AssemblyName>LeigodClean</AssemblyName>
     <RootNamespace>LeigodClean</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>bunwright</Authors>
     <Product>LeigodClean</Product>
     <Description>Focused desktop interface and process-aware automation for Leigod on Windows.</Description>
@@ -32,6 +32,7 @@
     <EmbeddedResource Include="..\LeigodClean.Runtime\product.json" LogicalName="Runtime/product.json" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\index.html" LogicalName="Runtime/renderer/index.html" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\styles.css" LogicalName="Runtime/renderer/styles.css" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\view-state.js" LogicalName="Runtime/renderer/view-state.js" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\app.js" LogicalName="Runtime/renderer/app.js" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\assets\leigodclean.svg" LogicalName="Runtime/assets/leigodclean.svg" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\assets\leigodclean.png" LogicalName="Runtime/assets/leigodclean.png" />

@@ -8,8 +8,10 @@ const path = require('node:path');
 const rendererRoot = path.join(__dirname, '..', 'renderer');
 const html = fs.readFileSync(path.join(rendererRoot, 'index.html'), 'utf8');
 const script = fs.readFileSync(path.join(rendererRoot, 'app.js'), 'utf8');
+const viewStateScript = fs.readFileSync(path.join(rendererRoot, 'view-state.js'), 'utf8');
 const styles = fs.readFileSync(path.join(rendererRoot, 'styles.css'), 'utf8');
 const mainRuntime = fs.readFileSync(path.join(rendererRoot, '..', 'main.cjs'), 'utf8');
+const preload = fs.readFileSync(path.join(rendererRoot, '..', 'preload.cjs'), 'utf8');
 const product = JSON.parse(fs.readFileSync(path.join(rendererRoot, '..', 'product.json'), 'utf8'));
 const project = fs.readFileSync(
   path.join(rendererRoot, '..', '..', 'LeigodClean.Launcher', 'LeigodClean.Launcher.csproj'),
@@ -32,6 +34,7 @@ test('renderer keeps scripts external and declares a restrictive policy', () => 
   assert.match(html, /Content-Security-Policy/iu);
   assert.match(html, /connect-src 'none'/u);
   assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/iu);
+  assert.match(html, /src="view-state\.js"[\s\S]*src="app\.js"/u);
 });
 
 test('main runtime avoids globals missing from the bundled Electron baseline', () => {
@@ -84,6 +87,27 @@ test('acceleration uses one contextual primary action without speculative succes
   assert.match(script, /canStopAcceleration\(\) \? stopAcceleration\(\) : startAcceleration\(\)/u);
   assert.match(script, /停止加速/u);
   assert.doesNotMatch(script, /停止并暂停/u);
+});
+
+test('acceleration state belongs to one game and active games are promoted visibly', () => {
+  assert.match(viewStateScript, /selectedIsActive/u);
+  assert.match(viewStateScript, /canStop:\s*selectedIsActive && status === 'speeding'/u);
+  assert.match(script, /className = 'game-active-indicator'/u);
+  assert.match(styles, /\.game-active-indicator\s*\{[^}]*background:\s*var\(--green\)/isu);
+  assert.match(script, /promoteGameInList\(gameId, true\)/u);
+  assert.match(script, /reason:\s*acceleration\.anotherIsActive \? 'another-game-active'/u);
+  assert.match(mainRuntime, /return combinedState\(\);/u);
+});
+
+test('modal dialogs dim and disable the native Windows title-bar controls', () => {
+  assert.match(preload, /setModalOpen/u);
+  assert.match(mainRuntime, /setCleanModalOpen\(open\)/u);
+  assert.match(mainRuntime, /setMinimizable\(enabled\)/u);
+  assert.match(mainRuntime, /setMaximizable\(enabled\)/u);
+  assert.match(mainRuntime, /setClosable\(enabled\)/u);
+  assert.match(mainRuntime, /modalTitleBarOverlay/u);
+  assert.match(script, /addEventListener\('close', syncModalPresentation\)/u);
+  assert.match(styles, /backdrop-filter:\s*blur\(7px\) saturate\(\.82\)/u);
 });
 
 test('game configuration uses accessible custom pickers and exposes monitored processes', () => {

@@ -66,15 +66,16 @@ function rankGames(games, priorities = {}) {
 }
 
 function installOfficialBridge(rankCatalog) {
-  if (window.__leigodCleanOfficial?.version === 2) {
+  if (window.__leigodCleanOfficial?.version === 3) {
     return true;
   }
 
   const runtime = {
-    version: 2,
+    version: 3,
     games: null,
     gameById: new Map(),
     recentGameIds: [],
+    sessionRecentGameIds: [],
     localGameIds: [],
     prioritiesLoadedAt: 0,
     lineByKey: new Map(),
@@ -274,7 +275,10 @@ function installOfficialBridge(rankCatalog) {
 
   function applyGamePriorities(localGames, recentRecords) {
     const recentRecord = recentRecords.find((record) => record?.id === '_') ?? recentRecords[0];
-    runtime.recentGameIds = uniqueGameIds(recentRecord?.games);
+    runtime.recentGameIds = uniqueGameIds([
+      ...runtime.sessionRecentGameIds,
+      ...uniqueGameIds(recentRecord?.games),
+    ]).slice(0, 20);
     runtime.localGameIds = uniqueGameIds(localGames);
     runtime.prioritiesLoadedAt = Date.now();
   }
@@ -546,6 +550,18 @@ function installOfficialBridge(rankCatalog) {
     const line = selection.line;
     const resumeScene = options.automatic ? 'auto_acc' : 'other';
     const wasPaused = user.userTimeInfo?.timeStatus === 'pause';
+    const currentGameId = toNumber(acc.accInfo?.game_id, 0);
+    const switchingGame = currentGameId > 0 && currentGameId !== gameId &&
+      String(acc.accInfo?.accStatus ?? 'normal') !== 'normal';
+
+    if (switchingGame) {
+      await Promise.resolve(acc.stopAcc({
+        game_id: currentGameId,
+        isConfirm: false,
+        reason: 'other',
+      }));
+      await wait(250);
+    }
 
     if (wasPaused) {
       await Promise.resolve(user.toggleTimeStatus('resume', { scene: resumeScene }));
@@ -567,10 +583,16 @@ function installOfficialBridge(rankCatalog) {
       }
       throw error;
     }
-    runtime.recentGameIds = [gameId, ...runtime.recentGameIds.filter((id) => id !== gameId)]
-      .slice(0, 20);
+    runtime.sessionRecentGameIds = [
+      gameId,
+      ...runtime.sessionRecentGameIds.filter((id) => id !== gameId),
+    ].slice(0, 20);
+    runtime.recentGameIds = uniqueGameIds([
+      ...runtime.sessionRecentGameIds,
+      ...runtime.recentGameIds,
+    ]).slice(0, 20);
     await wait(350);
-    return { accepted: true, ...visibleAttention() };
+    return { accepted: true, state: await state(), ...visibleAttention() };
   }
 
   async function autoStart(payload = {}) {

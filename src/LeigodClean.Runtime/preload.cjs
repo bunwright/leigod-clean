@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('leigodClean', Object.freeze({
   rememberSelection: (selection) => invoke('rememberSelection', selection),
   setGameAutoAcceleration: (gameId, enabled) =>
     invoke('setGameAutoAcceleration', { gameId, enabled }),
+  setModalOpen: (open) => invoke('setModalOpen', { open }),
   openLogs: () => invoke('openLogs'),
   copyDiagnostics: () => invoke('copyDiagnostics'),
   onState(callback) {

@@ -1,6 +1,7 @@
 'use strict';
 
 const api = window.leigodClean;
+const viewState = window.leigodCleanViewState;
 const model = {
   state: null,
   settings: null,
@@ -11,6 +12,7 @@ const model = {
   selectionGeneration: 0,
   lineGeneration: 0,
   starting: false,
+  switching: false,
   stopping: false,
   timeChanging: false,
   toastTimer: null,
@@ -82,10 +84,25 @@ function applyState(next) {
   if (!next) {
     return;
   }
+  const previousClient = model.state?.client ?? {};
   model.state = next;
   model.settings = next.settings ?? model.settings;
   const client = next.client ?? {};
   const connected = Boolean(client.connected && client.ready);
+  const previousAcceleration = viewState.accelerationContext(previousClient);
+  const acceleration = viewState.accelerationContext(client);
+  const promoted = acceleration.activeGameId
+    ? promoteGameInList(
+      acceleration.activeGameId,
+      acceleration.activeGameId !== previousAcceleration.activeGameId,
+    )
+    : false;
+  const activityChanged = previousAcceleration.activeGameId !== acceleration.activeGameId ||
+    previousAcceleration.status !== acceleration.status;
+
+  if ((promoted || activityChanged) && model.games.length > 0) {
+    renderGameList();
+  }
 
   elements.accountButton.hidden = !connected;
   elements.accountName.textContent = client.isLogin ? (client.displayName || '已登录') : '尚未登录';
@@ -122,7 +139,10 @@ async function searchGames() {
     if (generation !== model.searchGeneration) {
       return;
     }
-    model.games = games;
+    model.games = viewState.promoteGame(
+      games,
+      viewState.accelerationContext(model.state?.client).activeGameId,
+    );
     elements.gameList.scrollTop = 0;
     renderGameList();
   } catch (error) {
@@ -138,6 +158,18 @@ async function searchGames() {
   }
 }
 
+function promoteGameInList(gameId, reveal = false) {
+  const games = viewState.promoteGame(model.games, gameId);
+  if (games === model.games) {
+    return false;
+  }
+  model.games = games;
+  if (reveal) {
+    elements.gameList.scrollTop = 0;
+  }
+  return true;
+}
+
 function renderGameList() {
   elements.gameList.replaceChildren();
   elements.gameCount.textContent = String(model.games.length);
@@ -150,15 +182,21 @@ function renderGameList() {
   }
 
   const fragment = document.createDocumentFragment();
+  const activeGameId = viewState.accelerationContext(model.state?.client).activeGameId;
   for (const game of model.games) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'game-item';
     button.setAttribute('role', 'option');
     button.dataset.gameId = String(game.id);
+    const isActive = activeGameId === String(game.id);
     button.classList.toggle('selected', String(model.selectedGame?.id) === String(game.id));
+    button.classList.toggle('active-session', isActive);
     button.setAttribute('aria-selected', button.classList.contains('selected') ? 'true' : 'false');
+    button.setAttribute('aria-label', isActive ? `${game.title}，正在加速` : game.title);
 
+    const thumbnail = document.createElement('span');
+    thumbnail.className = 'game-thumb-wrap';
     const fallback = document.createElement('span');
     fallback.className = 'game-thumb-fallback';
     fallback.textContent = initials(game.title);
@@ -168,10 +206,18 @@ function renderGameList() {
       image.src = game.image;
       image.alt = '';
       image.addEventListener('error', () => image.replaceWith(fallback), { once: true });
-      button.append(image);
+      thumbnail.append(image);
     } else {
-      button.append(fallback);
+      thumbnail.append(fallback);
     }
+    if (isActive) {
+      const indicator = document.createElement('span');
+      indicator.className = 'game-active-indicator';
+      indicator.setAttribute('aria-hidden', 'true');
+      indicator.title = '正在加速';
+      thumbnail.append(indicator);
+    }
+    button.append(thumbnail);
 
     const copy = document.createElement('span');
     copy.className = 'game-item-copy';
@@ -372,15 +418,24 @@ async function startAcceleration() {
     model.starting || model.stopping) {
     return;
   }
+  const gameId = model.selectedGame.id;
+  model.switching = viewState.accelerationContext(
+    model.state?.client,
+    gameId,
+  ).anotherIsActive;
   model.starting = true;
   updateStartAvailability();
   try {
-    unwrap(await api.start({
-      gameId: model.selectedGame.id,
+    const next = unwrap(await api.start({
+      gameId,
       areaId: selectedArea().id,
       subAreaId: selectedSubArea()?.id ?? -1,
       lineKey: elements.lineSelect.value,
     }));
+    applyState(next);
+    if (promoteGameInList(gameId, true)) {
+      renderGameList();
+    }
   } catch (error) {
     if (error.code === 'LOGIN_REQUIRED') {
       await showOfficial();
@@ -388,6 +443,7 @@ async function startAcceleration() {
     showToast(messageOf(error), true);
   } finally {
     model.starting = false;
+    model.switching = false;
     updateStartAvailability();
   }
 }
@@ -409,7 +465,10 @@ async function stopAcceleration() {
 }
 
 function canStopAcceleration(client = model.state?.client ?? {}) {
-  return Boolean(client.isLogin && client.accStatus !== 'normal');
+  return Boolean(
+    client.isLogin &&
+    viewState.accelerationContext(client, model.selectedGame?.id).canStop,
+  );
 }
 
 async function toggleTime() {
@@ -461,18 +520,36 @@ function renderTimeControl() {
 function renderSession() {
   const client = model.state?.client ?? {};
   const monitor = model.state?.monitor ?? { state: 'idle' };
-  const accelerating = client.accStatus === 'speeding';
-  const loading = client.accStatus === 'loading';
+  const acceleration = viewState.accelerationContext(client, model.selectedGame?.id);
+  const monitorVisible = viewState.shouldDisplayMonitor(
+    client,
+    monitor,
+    model.selectedGame?.id,
+  );
+  const visibleMonitor = monitorVisible
+    ? monitor
+    : {
+      state: 'idle',
+      reason: acceleration.anotherIsActive ? 'another-game-active' : 'different-game',
+    };
 
-  elements.sessionBadge.classList.toggle('active', accelerating);
-  elements.sessionBadge.classList.toggle('loading', loading);
-  elements.sessionStatus.textContent = accelerating ? '加速中' : loading ? '正在启动' : '未加速';
-  elements.durationMetric.textContent = formatClock(Number(client.duration) || 0);
-  elements.delayMetric.textContent = Number(client.delay) > 0 ? `${client.delay} ms` : '—';
-  elements.lossMetric.textContent = Number(client.loss) > 0 ? `${client.loss}%` : '0%';
-  const monitorView = monitorPresentation(monitor);
+  elements.sessionBadge.classList.toggle('active', acceleration.accelerating);
+  elements.sessionBadge.classList.toggle('loading', acceleration.loading);
+  elements.sessionStatus.textContent = acceleration.accelerating
+    ? '加速中'
+    : acceleration.loading ? '正在启动' : '未加速';
+  if (acceleration.selectedIsActive) {
+    elements.durationMetric.textContent = formatClock(Number(client.duration) || 0);
+    elements.delayMetric.textContent = Number(client.delay) > 0 ? `${client.delay} ms` : '—';
+    elements.lossMetric.textContent = Number(client.loss) > 0 ? `${client.loss}%` : '0%';
+  } else {
+    elements.durationMetric.textContent = '—';
+    elements.delayMetric.textContent = '—';
+    elements.lossMetric.textContent = '—';
+  }
+  const monitorView = monitorPresentation(visibleMonitor);
   elements.monitorChip.textContent = monitorView.chip;
-  elements.monitorChip.className = `monitor-chip ${monitor.state ?? 'idle'}`;
+  elements.monitorChip.className = `monitor-chip ${visibleMonitor.state ?? 'idle'}`;
   elements.monitorDescription.textContent = monitorView.description;
   elements.monitorTitle.textContent = monitorView.title;
   elements.monitorDetail.textContent = monitorView.detail;
@@ -499,6 +576,9 @@ function monitorPresentation(monitor) {
     case 'missing':
       return { chip: '需要设置', title: '未找到可用进程列表', detail: monitor.error || '可在偏好设置中填写当前游戏的进程名。', description: '自动暂停暂不可用' };
     default:
+      if (monitor.reason === 'another-game-active') {
+        return { chip: '可切换', title: '当前游戏未加速', detail: '选择配置并点击“一键加速”即可切换。', description: '可切换到当前游戏' };
+      }
       if (monitor.reason === 'automatic-pause-disabled') {
         return { chip: '已关闭', title: '自动暂停已关闭', detail: '可在偏好设置中重新开启。', description: '仅保留手动控制' };
       }
@@ -508,9 +588,11 @@ function monitorPresentation(monitor) {
 
 function updateStartAvailability() {
   const client = model.state?.client ?? {};
-  const officialStarting = client.accStatus === 'loading';
-  const stopMode = !officialStarting && canStopAcceleration(client);
-  const busy = model.starting || model.stopping || officialStarting;
+  const acceleration = viewState.accelerationContext(client, model.selectedGame?.id);
+  const selectedStarting = acceleration.loading;
+  const anotherStarting = client.accStatus === 'loading' && !acceleration.selectedIsActive;
+  const stopMode = canStopAcceleration(client);
+  const busy = model.starting || model.stopping || selectedStarting;
   const canStart = Boolean(
     model.state?.client?.ready &&
     client.isLogin &&
@@ -518,16 +600,20 @@ function updateStartAvailability() {
     selectedArea() &&
     elements.lineSelect.value,
   );
-  elements.startButton.disabled = busy || (stopMode ? !client.isLogin : !canStart);
+  elements.startButton.disabled = busy || anotherStarting || (stopMode ? !client.isLogin : !canStart);
   elements.startButton.classList.toggle('stop-action', stopMode || model.stopping);
   elements.startSpinner.hidden = !busy;
   elements.startIcon.hidden = busy || stopMode;
   elements.stopIcon.hidden = busy || !stopMode;
-  elements.startButtonText.textContent = model.stopping
-    ? '正在停止'
-    : model.starting || officialStarting
-      ? '正在启动'
-      : stopMode ? '停止加速' : '一键加速';
+  let buttonText = stopMode ? '停止加速' : '一键加速';
+  if (model.stopping) {
+    buttonText = '正在停止';
+  } else if (model.starting) {
+    buttonText = model.switching ? '正在切换' : '正在启动';
+  } else if (selectedStarting) {
+    buttonText = '正在启动';
+  }
+  elements.startButtonText.textContent = buttonText;
 }
 
 function performPrimaryAction() {
@@ -817,6 +903,12 @@ async function showOfficial() {
   }
 }
 
+function syncModalPresentation() {
+  const open = elements.settingsDialog.open || elements.aboutDialog.open;
+  document.body.classList.toggle('modal-open', open);
+  void api.setModalOpen(open).then(unwrap).catch(() => {});
+}
+
 function openSettings() {
   const settings = model.settings ?? {
     autoAccelerationEnabled: false,
@@ -850,6 +942,7 @@ function openSettings() {
     : 'Game.exe, Launcher.exe';
   elements.settingsOfficialButton.textContent = model.state?.client?.officialVisible ? '收起' : '打开';
   elements.settingsDialog.showModal();
+  syncModalPresentation();
 }
 
 async function saveSettings(event) {
@@ -970,6 +1063,7 @@ function openAbout() {
     ? `Electron ${application.electron}`
     : ''].filter(Boolean).join(' · ') || '—';
   elements.aboutDialog.showModal();
+  syncModalPresentation();
 }
 
 function formatCountdown(milliseconds) {
@@ -1018,8 +1112,10 @@ elements.accountButton.addEventListener('click', () => {
 });
 elements.settingsButton.addEventListener('click', openSettings);
 elements.aboutButton.addEventListener('click', openAbout);
+elements.aboutDialog.addEventListener('close', syncModalPresentation);
 elements.aboutCloseButton.addEventListener('click', () => elements.aboutDialog.close());
 elements.aboutDoneButton.addEventListener('click', () => elements.aboutDialog.close());
+elements.settingsDialog.addEventListener('close', syncModalPresentation);
 elements.settingsCloseButton.addEventListener('click', () => elements.settingsDialog.close());
 elements.settingsCancelButton.addEventListener('click', () => elements.settingsDialog.close());
 elements.settingsOfficialButton.addEventListener('click', async () => {
