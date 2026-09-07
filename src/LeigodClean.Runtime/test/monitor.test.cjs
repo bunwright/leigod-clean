@@ -54,7 +54,7 @@ test('normalizes and de-duplicates process names safely', () => {
   );
 });
 
-test('resolves process lists using user, community, then official precedence', () => {
+test('uses user overrides, curated corrections, and then official processes by priority', () => {
   const official = ['Official.exe', 'StaleHelper.exe'];
   const catalog = { 42: ['Launcher.exe', 'Game.exe'] };
 
@@ -62,7 +62,10 @@ test('resolves process lists using user, community, then official precedence', (
     resolveProcesses(42, official, { 42: ['Custom.exe'] }, catalog),
     ['Custom.exe'],
   );
-  assert.deepEqual(resolveProcesses(42, official, {}, catalog), ['Launcher.exe', 'Game.exe']);
+  assert.deepEqual(
+    resolveProcesses(42, official, {}, catalog),
+    ['Launcher.exe', 'Game.exe'],
+  );
   assert.deepEqual(resolveProcesses(7, official, {}, catalog), official);
 });
 

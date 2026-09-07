@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <RuntimeIdentifiers>win-x64;win-x86</RuntimeIdentifiers>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <Prefer32Bit>false</Prefer32Bit>
+    <AssemblyName>LeigodClean.ProcessObserver</AssemblyName>
+    <RootNamespace>LeigodClean</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Management" />
+    <Compile Include="..\LeigodClean.Launcher\ProcessEventProtocol.cs" Link="ProcessEventProtocol.cs" />
+    <Compile Include="..\LeigodClean.Launcher\ProcessRegistry.cs" Link="ProcessRegistry.cs" />
+  </ItemGroup>
+
+</Project>

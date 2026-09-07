@@ -80,6 +80,7 @@ test('manual acceleration and account-time controls use independent official act
   );
   const events = [];
   const stateSubscribers = [];
+  let emptyGameInfoCalls = 0;
   const originalDateNow = Date.now;
   let now = 1_000;
   const user = {
@@ -118,7 +119,13 @@ test('manual acceleration and account-time controls use independent official act
   const stores = new Map([
     ['game_list', [
       { id: 1, title: 'Popular Game', game_type: 0, hot: 100 },
-      { id: 42, title: 'Test Game', game_type: 0, hot: 0 },
+      {
+        id: 42,
+        title: 'Test Game',
+        game_type: 0,
+        hot: 0,
+        game_process: 'IndexedGame.exe',
+      },
     ]],
     ['local_games', [{ id: 1 }]],
     ['recent_games', [{ id: '_', games: [42] }]],
@@ -166,7 +173,16 @@ test('manual acceleration and account-time controls use independent official act
     };
     globalThis.window = {
       leigodSimplify: {
-        async invoke() {
+        async invoke(channel, payload) {
+          if (channel === 'get-game-info') {
+            if (payload?.game_id === 1) {
+              emptyGameInfoCalls += 1;
+              return emptyGameInfoCalls === 1
+                ? []
+                : [{ game_process: 'RecoveredGame.exe' }];
+            }
+            return [{ game_process: 'LiveLauncher.exe,LiveGame.exe' }];
+          }
           return {
             data: {
               recomRegion: 'OPTIMAL',
@@ -221,6 +237,24 @@ test('manual acceleration and account-time controls use independent official act
       await window.__leigodCleanOfficial.call('autoCandidates'),
       [1, 42],
     );
+    const unresolvedGame = await window.__leigodCleanOfficial.call('getGame', {
+      gameId: 1,
+      liveProcesses: true,
+    });
+    assert.equal(unresolvedGame.liveProcessesResolved, false);
+    const recoveredGame = await window.__leigodCleanOfficial.call('getGame', {
+      gameId: 1,
+      liveProcesses: true,
+    });
+    assert.equal(recoveredGame.liveProcessesResolved, true);
+    assert.deepEqual(recoveredGame.processes, ['RecoveredGame.exe']);
+    assert.equal(emptyGameInfoCalls, 2, 'empty live results must not poison the process cache');
+    const game = await window.__leigodCleanOfficial.call('getGame', {
+      gameId: 42,
+      liveProcesses: true,
+    });
+    assert.equal(game.liveProcessesResolved, true);
+    assert.deepEqual(game.processes, ['LiveLauncher.exe', 'LiveGame.exe']);
     const lines = await window.__leigodCleanOfficial.call('getLines', {
       gameId: 42,
       areaId: 3,

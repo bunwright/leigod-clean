@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/LeigodClean.Launcher/LeigodClean.Launcher.csproj" />
+    <Project Path="src/LeigodClean.ProcessObserver/LeigodClean.ProcessObserver.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/LeigodClean.Launcher.Tests/LeigodClean.Launcher.Tests.csproj" />

@@ -4,7 +4,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
-const { ProcessEventSource, normalizeProcessName } = require('../process-events.cjs');
+const {
+  ProcessEventSource,
+  normalizeExecutablePath,
+  normalizeProcessName,
+} = require('../process-events.cjs');
 
 function createChild() {
   const child = new EventEmitter();
@@ -24,7 +28,7 @@ function createHarness(options = {}) {
   const timers = [];
   let now = 1000;
   const source = new ProcessEventSource({
-    launcherPath: 'C:\\Apps\\LeigodClean.exe',
+    executablePath: 'C:\\Apps\\LeigodClean.ProcessObserver.exe',
     spawnFn: (_path, _args, _options) => {
       const child = createChild();
       children.push(child);
@@ -61,6 +65,8 @@ test('normalizes executable names and paths while rejecting invalid names', () =
   assert.equal(normalizeProcessName('Game'), 'Game.exe');
   assert.equal(normalizeProcessName('C:\\Games\\Launcher.EXE'), 'Launcher.EXE');
   assert.equal(normalizeProcessName('bad:name'), '');
+  assert.equal(normalizeExecutablePath('"C:/Games/Game.exe"'), 'C:\\Games\\Game.exe');
+  assert.equal(normalizeExecutablePath('bad\npath'), '');
 });
 
 test('starts a hidden observer and accepts its initial snapshot', () => {
@@ -73,13 +79,18 @@ test('starts a hidden observer and accepts its initial snapshot', () => {
   send(harness.children[0], {
     type: 'snapshot',
     sequence: 1,
-    processes: [{ pid: 10, name: 'Game.exe' }],
+    processes: [{ pid: 10, name: 'Game.exe', path: 'C:\\Games\\Game.exe' }],
   });
 
   assert.equal(harness.source.snapshot.ready, true);
   assert.equal(harness.source.snapshot.status, 'ready');
   assert.equal(harness.source.isRunning('game.EXE'), true);
   assert.deepEqual(harness.source.runningNames, ['game.exe']);
+  assert.deepEqual(harness.source.runningProcesses, [{
+    pid: 10,
+    name: 'Game.exe',
+    path: 'C:\\Games\\Game.exe',
+  }]);
   assert.equal(events.at(-1).kind, 'snapshot');
   assert.deepEqual(events.at(-1).names, ['game.exe']);
 });
@@ -104,11 +115,41 @@ test('keeps a same-name process running until its final pid exits', () => {
   });
   send(child, { type: 'stopped', sequence: 2, pid: 10, name: 'Game.exe' });
   assert.equal(harness.source.isRunning('Game.exe'), true);
-  assert.equal(changes.length, 1, 'first duplicate exit does not change name presence');
+  assert.equal(changes.length, 2, 'per-process exits remain visible even when name presence is stable');
+  assert.deepEqual(changes.at(-1).names, []);
+  assert.equal(changes.at(-1).processes[0].pid, 10);
 
   send(child, { type: 'stopped', sequence: 3, pid: 11, name: 'game.exe' });
   assert.equal(harness.source.isRunning('Game.exe'), false);
   assert.deepEqual(changes.at(-1).names, ['game.exe']);
+});
+
+test('accepts rapid launcher-to-game events delivered in one output chunk', () => {
+  const harness = createHarness();
+  const changes = [];
+  harness.source.subscribe((event) => {
+    if (event.type === 'change') {
+      changes.push(event);
+    }
+  });
+  harness.source.start();
+  const child = harness.children[0];
+  child.stdout.write([
+    JSON.stringify({ type: 'snapshot', sequence: 1, processes: [] }),
+    JSON.stringify({ type: 'started', sequence: 2, pid: 20, name: 'ffxivboot.exe' }),
+    JSON.stringify({ type: 'stopped', sequence: 3, pid: 20, name: 'ffxivboot.exe' }),
+    JSON.stringify({ type: 'started', sequence: 4, pid: 21, name: 'ffxiv_dx11.exe' }),
+    '',
+  ].join('\n'));
+
+  assert.deepEqual(changes.map((event) => [event.kind, event.processes?.[0]?.name]), [
+    ['snapshot', undefined],
+    ['started', 'ffxivboot.exe'],
+    ['stopped', 'ffxivboot.exe'],
+    ['started', 'ffxiv_dx11.exe'],
+  ]);
+  assert.equal(harness.source.isRunning('ffxivboot.exe'), false);
+  assert.equal(harness.source.isRunning('ffxiv_dx11.exe'), true);
 });
 
 test('does not let a delayed stop remove a reused pid', () => {

@@ -97,12 +97,20 @@
                   <span class="soft-tag" id="processTag">正在读取进程</span>
                 </div>
               </div>
-              <div class="session-badge" id="sessionBadge">
-                <span class="session-orb"></span>
-                <div>
-                  <small>会话状态</small>
-                  <strong id="sessionStatus">未加速</strong>
+              <div class="session-control" id="sessionBadge">
+                <div class="session-summary">
+                  <span class="session-orb"></span>
+                  <div>
+                    <small>会话状态</small>
+                    <strong id="sessionStatus">未加速</strong>
+                  </div>
                 </div>
+                <button class="primary-button" id="startButton" type="button" disabled>
+                  <span class="button-spinner" id="startSpinner" hidden></span>
+                  <svg id="startIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="m13.4 2.5-7.6 10.5h5.1l-.6 8.5L18.2 11h-5.1l.3-8.5Z"/></svg>
+                  <svg id="stopIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
+                  <strong id="startButtonText">一键加速</strong>
+                </button>
               </div>
             </article>
 
@@ -113,7 +121,9 @@
                     <h2>加速配置</h2>
                     <p>线路数据由官方客户端实时提供</p>
                   </div>
-                  <button class="text-button" id="refreshLinesButton" type="button">刷新线路</button>
+                  <button class="icon-button panel-icon-button" id="refreshLinesButton" type="button" aria-label="刷新线路" title="刷新线路">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M18.2 10A7 7 0 0 0 6.5 6.5L4 9m2 5a7 7 0 0 0 11.5 3.5L20 15"/></svg>
+                  </button>
                 </div>
 
                 <div class="field-grid">
@@ -168,12 +178,6 @@
                   </label>
                 </div>
 
-                <button class="primary-button" id="startButton" type="button" disabled>
-                  <span class="button-spinner" id="startSpinner" hidden></span>
-                  <svg id="startIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="m13.4 2.5-7.6 10.5h5.1l-.6 8.5L18.2 11h-5.1l.3-8.5Z"/></svg>
-                  <svg id="stopIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
-                  <strong id="startButtonText">一键加速</strong>
-                </button>
               </article>
 
               <article class="panel session-panel">
@@ -185,19 +189,32 @@
                   <span class="monitor-chip" id="monitorChip">空闲</span>
                 </div>
 
-                <div class="metric-grid">
-                  <div class="metric primary-metric">
-                    <small>加速时长</small>
-                    <strong id="durationMetric">00:00:00</strong>
-                  </div>
-                  <div class="metric">
-                    <small>线路延迟</small>
-                    <strong id="delayMetric">—</strong>
-                  </div>
-                  <div class="metric">
-                    <small>丢包</small>
-                    <strong id="lossMetric">—</strong>
-                  </div>
+                <div class="telemetry-focus" aria-live="polite">
+                  <span class="telemetry-focus-icon" aria-hidden="true">
+                    <svg id="telemetryDurationIcon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                    <svg id="telemetryDelayIcon" viewBox="0 0 24 24" hidden><path d="M4 14a8 8 0 0 1 16 0M7 17a5 5 0 0 1 10 0M10 20a2 2 0 0 1 4 0"/></svg>
+                    <svg id="telemetryLossIcon" viewBox="0 0 24 24" hidden><path d="M4 12h3l2-5 4 10 2-5h5"/><path d="m17 5 3 3m0-3-3 3"/></svg>
+                  </span>
+                  <span class="telemetry-focus-copy">
+                    <small id="telemetryLabel">加速时长</small>
+                    <strong id="telemetryValue">—</strong>
+                    <span id="telemetryCaption">开始加速后显示实时指标</span>
+                  </span>
+                </div>
+
+                <div class="metric-switcher" id="metricSwitcher" role="tablist" aria-label="运行指标">
+                  <button class="metric-option selected" data-metric="duration" type="button" role="tab" aria-selected="true">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                    <span><small>时长</small><strong id="durationMetric">—</strong></span>
+                  </button>
+                  <button class="metric-option" data-metric="delay" type="button" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14a8 8 0 0 1 16 0M7 17a5 5 0 0 1 10 0M10 20a2 2 0 0 1 4 0"/></svg>
+                    <span><small>延迟</small><strong id="delayMetric">—</strong></span>
+                  </button>
+                  <button class="metric-option" data-metric="loss" type="button" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h3l2-5 4 10 2-5h5"/></svg>
+                    <span><small>丢包</small><strong id="lossMetric">—</strong></span>
+                  </button>
                 </div>
 
                 <div class="monitor-detail">

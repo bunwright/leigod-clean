@@ -30,6 +30,17 @@ public sealed class ProcessEventTests
     }
 
     [Fact]
+    public void PreservesExecutablePathsAcrossStopEvents()
+    {
+        var registry = new ProcessRegistry();
+        registry.Start(new ObservedProcess(42, "Game.exe", @"C:\Games\Game.exe"));
+
+        ObservedProcess running = Assert.Single(registry.Snapshot());
+        Assert.Equal(@"C:\Games\Game.exe", running.ExecutablePath);
+        Assert.Equal(running, registry.Find(42));
+    }
+
+    [Fact]
     public void IgnoresDelayedStopAfterPidReuse()
     {
         var registry = new ProcessRegistry();
@@ -60,7 +71,7 @@ public sealed class ProcessEventTests
     public void SerializesBoundedNdjsonMessages()
     {
         string json = ProcessEventProtocol.Snapshot(7, [
-            new ObservedProcess(42, "Game.exe"),
+            new ObservedProcess(42, "Game.exe", @"C:\Games\Game.exe"),
         ]);
 
         using JsonDocument document = JsonDocument.Parse(json);
@@ -70,6 +81,20 @@ public sealed class ProcessEventTests
         JsonElement process = Assert.Single(root.GetProperty("processes").EnumerateArray());
         Assert.Equal(42, process.GetProperty("pid").GetInt32());
         Assert.Equal("Game.exe", process.GetProperty("name").GetString());
+        Assert.Equal(@"C:\Games\Game.exe", process.GetProperty("path").GetString());
+        Assert.DoesNotContain('\n', json);
+    }
+
+    [Fact]
+    public void EscapesObserverErrorsAsValidSingleLineJson()
+    {
+        string json = ProcessEventProtocol.Error("line 1\n\"line 2\"", "TEST", true);
+
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement root = document.RootElement;
+        Assert.Equal("line 1\n\"line 2\"", root.GetProperty("message").GetString());
+        Assert.Equal("TEST", root.GetProperty("code").GetString());
+        Assert.True(root.GetProperty("retryable").GetBoolean());
         Assert.DoesNotContain('\n', json);
     }
 }

@@ -15,6 +15,8 @@ const model = {
   switching: false,
   stopping: false,
   timeChanging: false,
+  settingsUpdating: false,
+  selectedMetric: 'duration',
   toastTimer: null,
   monitorClockTimer: null,
   durationClockTimer: null,
@@ -354,6 +356,7 @@ async function loadLines(refresh) {
   const game = model.selectedGame;
   const area = selectedArea();
   if (!game || !area || !model.state?.client?.isLogin) {
+    setLineRefreshBusy(false, true);
     model.lines = [];
     setOptions(elements.lineSelect, [], model.state?.client?.isLogin ? '暂无线路' : '登录后获取线路');
     elements.lineHint.textContent = model.state?.client?.isLogin
@@ -364,6 +367,7 @@ async function loadLines(refresh) {
   }
 
   const generation = ++model.lineGeneration;
+  setLineRefreshBusy(true);
   setChoiceDisabled(elements.lineSelect, true);
   setOptions(elements.lineSelect, [], '正在获取线路…');
   elements.lineHint.textContent = '正在从官方客户端获取可用线路';
@@ -404,10 +408,16 @@ async function loadLines(refresh) {
     }
   } finally {
     if (generation === model.lineGeneration) {
+      setLineRefreshBusy(false);
       setChoiceDisabled(elements.lineSelect, model.lines.length === 0);
       updateStartAvailability();
     }
   }
+}
+
+function setLineRefreshBusy(busy, disabled = busy) {
+  elements.refreshLinesButton.disabled = Boolean(disabled);
+  elements.refreshLinesButton.classList.toggle('refreshing', Boolean(busy));
 }
 
 function renderLineHint() {
@@ -552,6 +562,7 @@ function renderSession() {
     elements.delayMetric.textContent = '—';
     elements.lossMetric.textContent = '—';
   }
+  renderTelemetryFocus(acceleration);
   const monitorView = monitorPresentation(visibleMonitor);
   elements.monitorChip.textContent = monitorView.chip;
   elements.monitorChip.className = `monitor-chip ${visibleMonitor.state ?? 'idle'}`;
@@ -598,6 +609,9 @@ function currentDuration(acceleration) {
 
 function renderDurationMetric(acceleration) {
   elements.durationMetric.textContent = formatClock(currentDuration(acceleration));
+  if (model.selectedMetric === 'duration') {
+    renderTelemetryFocus(acceleration);
+  }
   clearDurationClockTimer();
   if (!acceleration?.accelerating || document.hidden ||
     elements.settingsDialog.open || elements.aboutDialog.open) {
@@ -615,6 +629,58 @@ function renderDurationMetric(acceleration) {
       renderDurationMetric(current);
     }
   }, delay);
+}
+
+function renderTelemetryFocus(acceleration = viewState.accelerationContext(
+  model.state?.client ?? {},
+  model.selectedGame?.id,
+)) {
+  const definitions = {
+    duration: {
+      label: '加速时长',
+      value: elements.durationMetric.textContent,
+      icon: elements.telemetryDurationIcon,
+      activeCaption: '当前会话累计时间',
+    },
+    delay: {
+      label: '线路延迟',
+      value: elements.delayMetric.textContent,
+      icon: elements.telemetryDelayIcon,
+      activeCaption: elements.delayMetric.textContent === '—' ? '等待线路反馈' : '数值越低，响应越快',
+    },
+    loss: {
+      label: '线路丢包',
+      value: elements.lossMetric.textContent,
+      icon: elements.telemetryLossIcon,
+      activeCaption: '数值越低，连接越稳定',
+    },
+  };
+  const selected = definitions[model.selectedMetric] ?? definitions.duration;
+  elements.telemetryLabel.textContent = selected.label;
+  elements.telemetryValue.textContent = selected.value || '—';
+  elements.telemetryCaption.textContent = acceleration.selectedIsActive
+    ? selected.activeCaption
+    : '开始加速后显示实时指标';
+  for (const definition of Object.values(definitions)) {
+    definition.icon.hidden = definition !== selected;
+  }
+  for (const option of elements.metricSwitcher.querySelectorAll('[data-metric]')) {
+    const active = option.dataset.metric === model.selectedMetric;
+    option.classList.toggle('selected', active);
+    option.setAttribute('aria-selected', active ? 'true' : 'false');
+    option.tabIndex = active ? 0 : -1;
+  }
+}
+
+function selectTelemetryMetric(metric, focus = false) {
+  if (!['duration', 'delay', 'loss'].includes(metric)) {
+    return;
+  }
+  model.selectedMetric = metric;
+  renderTelemetryFocus();
+  if (focus) {
+    elements.metricSwitcher.querySelector(`[data-metric="${metric}"]`)?.focus();
+  }
 }
 
 function clearDurationClockTimer() {
@@ -760,14 +826,20 @@ function renderGameAutoAcceleration() {
     model.lines.find((item) => item.key === elements.lineSelect.value) || selectedPreference(),
   );
   const globalEnabled = model.settings?.autoAccelerationEnabled === true;
+  const observerReady = model.state?.processEvents?.ready === true;
+  const primaryProcess = model.selectedGame?.processes?.[0] ?? '';
   elements.gameAutoInput.checked = dedicatedEnabled;
   elements.gameAutoInput.disabled = !hasSelection && !dedicatedEnabled;
   elements.gameAutoOption.classList.toggle('enabled', dedicatedEnabled || globalEnabled);
   if (dedicatedEnabled) {
-    elements.gameAutoHint.textContent = '已单独启用，关闭全局开关后仍然生效';
+    elements.gameAutoHint.textContent = observerReady
+      ? `正在监听 ${primaryProcess || '目标进程'} · 关闭全局开关后仍然生效`
+      : '已单独启用，关闭全局开关后仍然生效';
   } else if (globalEnabled) {
     elements.gameAutoHint.textContent = hasSelection
-      ? '已由所有游戏自动加速覆盖；单独开启可永久保留'
+      ? observerReady
+        ? `全局已启用 · 正在监听 ${primaryProcess || '目标进程'}`
+        : '全局已启用 · 进程检测服务恢复中'
       : '本地或近期游戏将自动匹配可用线路';
   } else {
     elements.gameAutoHint.textContent = hasSelection
@@ -1060,6 +1132,9 @@ function openSettings() {
 
 async function saveSettings(event) {
   event.preventDefault();
+  if (model.settingsUpdating) {
+    return;
+  }
   try {
     const next = {
       autoAccelerationEnabled: elements.autoAccelerationInput.checked,
@@ -1099,6 +1174,30 @@ async function saveSettings(event) {
     showToast('偏好设置已保存。');
   } catch (error) {
     showToast(messageOf(error), true);
+  }
+}
+
+async function setGlobalAutoAcceleration() {
+  if (model.settingsUpdating) {
+    return;
+  }
+  const desired = elements.autoAccelerationInput.checked;
+  model.settingsUpdating = true;
+  elements.autoAccelerationInput.disabled = true;
+  elements.saveSettingsButton.disabled = true;
+  try {
+    model.settings = unwrap(await api.updateSettings({
+      ...(model.settings ?? {}),
+      autoAccelerationEnabled: desired,
+    }));
+    renderGameAutoAcceleration();
+  } catch (error) {
+    elements.autoAccelerationInput.checked = !desired;
+    showToast(messageOf(error), true);
+  } finally {
+    model.settingsUpdating = false;
+    elements.autoAccelerationInput.disabled = false;
+    elements.saveSettingsButton.disabled = false;
   }
 }
 
@@ -1215,6 +1314,30 @@ elements.lineSelect.addEventListener('change', () => {
 elements.gameAutoInput.addEventListener('change', () => void setGameAutoAcceleration());
 elements.refreshLinesButton.addEventListener('click', () => void loadLines(true));
 elements.startButton.addEventListener('click', () => void performPrimaryAction());
+elements.metricSwitcher.addEventListener('click', (event) => {
+  const option = event.target.closest('[data-metric]');
+  if (option) {
+    selectTelemetryMetric(option.dataset.metric);
+  }
+});
+elements.metricSwitcher.addEventListener('keydown', (event) => {
+  const order = ['duration', 'delay', 'loss'];
+  const current = order.indexOf(model.selectedMetric);
+  let next = current;
+  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+    next = (current + 1) % order.length;
+  } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+    next = (current - 1 + order.length) % order.length;
+  } else if (event.key === 'Home') {
+    next = 0;
+  } else if (event.key === 'End') {
+    next = order.length - 1;
+  } else {
+    return;
+  }
+  event.preventDefault();
+  selectTelemetryMetric(order[next], true);
+});
 elements.timeToggleButton.addEventListener('click', () => void toggleTime());
 elements.accountButton.addEventListener('click', () => {
   if (model.state?.client?.isLogin) {
@@ -1236,6 +1359,7 @@ elements.settingsOfficialButton.addEventListener('click', async () => {
   await showOfficial();
 });
 elements.settingsForm.addEventListener('submit', saveSettings);
+elements.autoAccelerationInput.addEventListener('change', () => void setGlobalAutoAcceleration());
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     clearDurationClockTimer();

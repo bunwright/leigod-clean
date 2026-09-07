@@ -66,12 +66,12 @@ function rankGames(games, priorities = {}) {
 }
 
 function installOfficialBridge(rankCatalog) {
-  if (window.__leigodCleanOfficial?.version === 5) {
+  if (window.__leigodCleanOfficial?.version === 6) {
     return true;
   }
 
   const runtime = {
-    version: 5,
+    version: 6,
     games: null,
     gameById: new Map(),
     recentGameIds: [],
@@ -79,6 +79,7 @@ function installOfficialBridge(rankCatalog) {
     localGameIds: [],
     prioritiesLoadedAt: 0,
     lineByKey: new Map(),
+    liveProcessesByGameId: new Map(),
     databaseName: '',
     stateRevision: 0,
     stateWaiters: new Map(),
@@ -365,6 +366,33 @@ function installOfficialBridge(rankCatalog) {
     return game ?? null;
   }
 
+  async function getLiveProcesses(gameId) {
+    const key = String(toNumber(gameId, -1));
+    const cached = runtime.liveProcessesByGameId.get(key);
+    if (cached && Date.now() - cached.loadedAt < 5 * 60 * 1000) {
+      return cached.processes;
+    }
+    let processes = [];
+    try {
+      const response = await window.leigodSimplify.invoke('get-game-info', {
+        game_id: toNumber(gameId, -1),
+      });
+      const candidates = Array.isArray(response)
+        ? response
+        : (Array.isArray(response?.data) ? response.data : []);
+      const current = candidates.find((item) => parseProcesses(item?.game_process).length > 0);
+      processes = parseProcesses(current?.game_process);
+    } catch {
+      // The IndexedDB catalog remains available if the live official endpoint is offline.
+    }
+    if (processes.length > 0) {
+      runtime.liveProcessesByGameId.set(key, { loadedAt: Date.now(), processes });
+    } else {
+      runtime.liveProcessesByGameId.delete(key);
+    }
+    return processes;
+  }
+
   function gameSearchText(game) {
     const aliases = typeof game.alias === 'string'
       ? game.alias
@@ -422,7 +450,15 @@ function installOfficialBridge(rankCatalog) {
     if (!game) {
       throw plainError('官方游戏库中没有该游戏。', 'GAME_NOT_FOUND');
     }
-    return normalizeGame(game);
+    const normalized = normalizeGame(game);
+    if (payload.liveProcesses === true) {
+      const liveProcesses = await getLiveProcesses(payload.gameId);
+      normalized.liveProcessesResolved = liveProcesses.length > 0;
+      if (liveProcesses.length > 0) {
+        normalized.processes = liveProcesses;
+      }
+    }
+    return normalized;
   }
 
   const lineModes = {

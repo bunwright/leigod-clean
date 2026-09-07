@@ -2,6 +2,127 @@
 
 const DEFAULT_RETRY_MS = 30000;
 
+class AutoEvaluationQueue {
+  constructor({
+    getOrder,
+    evaluate,
+    canContinue = () => true,
+    onError = () => {},
+  }) {
+    if (typeof getOrder !== 'function' || typeof evaluate !== 'function') {
+      throw new TypeError('AutoEvaluationQueue requires getOrder and evaluate functions.');
+    }
+    this._getOrder = getOrder;
+    this._evaluate = evaluate;
+    this._canContinue = canContinue;
+    this._onError = onError;
+    this._routine = new Set();
+    this._routineInFlight = new Set();
+    this._triggers = [];
+    this._drainPromise = null;
+    this._generation = 0;
+  }
+
+  enqueue(gameIds, { allowSwitch = false } = {}) {
+    const values = uniqueGameIds(gameIds);
+    if (values.length === 0) {
+      return this._drainPromise;
+    }
+    if (allowSwitch) {
+      // Keep process-start events separate: each real launch may switch once, while
+      // aliases shared by multiple catalog entries must never cause a switch loop.
+      this._triggers.push(values);
+    } else {
+      for (const gameId of values) {
+        if (!this._routineInFlight.has(gameId)) {
+          this._routine.add(gameId);
+        }
+      }
+    }
+    this._ensureDrain();
+    return this._drainPromise;
+  }
+
+  clear() {
+    this._generation += 1;
+    this._routine.clear();
+    this._routineInFlight.clear();
+    this._triggers.length = 0;
+  }
+
+  get pending() {
+    return this._routine.size + this._triggers.reduce((total, batch) => total + batch.length, 0);
+  }
+
+  _ensureDrain() {
+    if (this._drainPromise) {
+      return;
+    }
+    this._drainPromise = this._drain()
+      .catch((error) => this._onError(error))
+      .finally(() => {
+        this._drainPromise = null;
+        if (this.pending > 0 && this._canContinue()) {
+          this._ensureDrain();
+        }
+      });
+  }
+
+  async _drain() {
+    while (this.pending > 0 && this._canContinue()) {
+      const generation = this._generation;
+      const trigger = this._triggers.shift();
+      const allowSwitch = Array.isArray(trigger);
+      const queued = allowSwitch ? new Set(trigger) : new Set(this._routine);
+      if (!allowSwitch) {
+        this._routine.clear();
+        this._routineInFlight = queued;
+      }
+      const ordered = uniqueGameIds(this._getOrder()).filter((gameId) => queued.has(gameId));
+      let actionTaken = false;
+      for (const gameId of ordered) {
+        if (generation !== this._generation || !this._canContinue()) {
+          break;
+        }
+        const started = await this._evaluate(gameId, allowSwitch && !actionTaken);
+        actionTaken = started === true || actionTaken;
+        if (allowSwitch && actionTaken) {
+          break;
+        }
+      }
+      if (!allowSwitch && generation === this._generation) {
+        this._routineInFlight.clear();
+      }
+    }
+  }
+}
+
+function uniqueGameIds(values) {
+  const result = [];
+  const seen = new Set();
+  for (const value of values ?? []) {
+    const gameId = gameIdOf(value);
+    if (gameId && !seen.has(gameId)) {
+      seen.add(gameId);
+      result.push(gameId);
+    }
+  }
+  return result;
+}
+
+function selectAutoEventGames(nameGameIds, locationGameIds, context = {}) {
+  const byName = uniqueGameIds(nameGameIds);
+  const precise = uniqueGameIds(locationGameIds);
+  const candidates = precise.length > 0 ? precise : byName;
+  const activeGameId = gameIdOf(context.activeGameId);
+  const activeHandoff = context.accelerating === true && activeGameId &&
+    (byName.includes(activeGameId) || precise.includes(activeGameId));
+  return {
+    gameIds: activeHandoff ? [activeGameId] : candidates,
+    activeHandoff: Boolean(activeHandoff),
+  };
+}
+
 function gameIdOf(value) {
   const candidate = value && typeof value === 'object'
     ? (value.id ?? value.gameId ?? value.game_id)
@@ -78,7 +199,8 @@ function evaluateAutoWatchState(state, input, now = Date.now()) {
 
   return {
     state: next,
-    shouldStart: !next.latched && now >= next.retryAt && input.loggedIn && !input.accelerating,
+    shouldStart: !next.latched && now >= next.retryAt && input.loggedIn &&
+      (!input.accelerating || input.allowSwitch === true),
   };
 }
 
@@ -90,9 +212,11 @@ function completeAutoWatchAttempt(state, succeeded, now = Date.now(), retryMs = 
 }
 
 module.exports = {
+  AutoEvaluationQueue,
   completeAutoWatchAttempt,
   defaultAutoSelection,
   DEFAULT_RETRY_MS,
   evaluateAutoWatchState,
   resolveAutoGameIds,
+  selectAutoEventGames,
 };

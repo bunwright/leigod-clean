@@ -13,6 +13,15 @@ const styles = fs.readFileSync(path.join(rendererRoot, 'styles.css'), 'utf8');
 const mainRuntime = fs.readFileSync(path.join(rendererRoot, '..', 'main.cjs'), 'utf8');
 const preload = fs.readFileSync(path.join(rendererRoot, '..', 'preload.cjs'), 'utf8');
 const processEvents = fs.readFileSync(path.join(rendererRoot, '..', 'process-events.cjs'), 'utf8');
+const autoAcceleration = fs.readFileSync(
+  path.join(rendererRoot, '..', 'auto-acceleration.cjs'),
+  'utf8',
+);
+const officialTray = fs.readFileSync(path.join(rendererRoot, '..', 'official-tray.cjs'), 'utf8');
+const communityProcesses = JSON.parse(fs.readFileSync(
+  path.join(rendererRoot, '..', 'community-processes.json'),
+  'utf8',
+));
 const product = JSON.parse(fs.readFileSync(path.join(rendererRoot, '..', 'product.json'), 'utf8'));
 const project = fs.readFileSync(
   path.join(rendererRoot, '..', '..', 'LeigodClean.Launcher', 'LeigodClean.Launcher.csproj'),
@@ -90,6 +99,15 @@ test('acceleration uses one contextual primary action without speculative succes
   assert.doesNotMatch(script, /停止并暂停/u);
 });
 
+test('primary acceleration control and switchable telemetry occupy the game workspace header', () => {
+  assert.ok(html.indexOf('id="startButton"') < html.indexOf('class="workspace-grid"'));
+  assert.match(html, /class="session-control" id="sessionBadge"/u);
+  assert.match(html, /id="metricSwitcher"[^>]*role="tablist"/u);
+  assert.match(html, /data-metric="duration"[\s\S]*data-metric="delay"[\s\S]*data-metric="loss"/u);
+  assert.match(script, /function selectTelemetryMetric/u);
+  assert.match(styles, /\.workspace-grid\s*\{[^}]*align-items:\s*stretch/isu);
+});
+
 test('acceleration state belongs to one game and active games are promoted visibly', () => {
   assert.match(viewStateScript, /selectedIsActive/u);
   assert.match(viewStateScript, /canStop:\s*selectedIsActive && status === 'speeding'/u);
@@ -117,7 +135,20 @@ test('process automation is event-driven and independent of the official native 
   assert.match(mainRuntime, /processEvents\.subscribe\(handleProcessEvent\)/u);
   assert.match(mainRuntime, /bridge\.call\('watchState'/u);
   assert.match(processEvents, /--process-events/u);
+  assert.match(mainRuntime, /process-observer\.exe/u);
   assert.match(project, /process-events\.cjs/u);
+  assert.match(project, /PublishTrimmed>true/u);
+});
+
+test('official tray is suppressed without replacing the clean application tray', () => {
+  assert.match(mainRuntime, /installOfficialTraySuppression/u);
+  assert.ok(
+    mainRuntime.indexOf('installOfficialTraySuppression') < mainRuntime.indexOf("officialRequire('./main.jsc')"),
+  );
+  assert.match(mainRuntime, /finally\s*\{\s*restoreOfficialTray\(\)/u);
+  assert.match(officialTray, /property === 'Tray' \? SuppressedTray/u);
+  assert.match(mainRuntime, /tray = new Tray\(/u);
+  assert.match(project, /official-tray\.cjs/u);
 });
 
 test('global and per-game automatic acceleration rules are independent', () => {
@@ -129,6 +160,16 @@ test('global and per-game automatic acceleration rules are independent', () => {
   assert.doesNotMatch(
     mainRuntime,
     /autoWatcherPolling \|\| autoStartBusy \|\| !settings\.autoAccelerationEnabled/u,
+  );
+  assert.match(mainRuntime, /allowSwitch:\s*kind === 'started'/u);
+  assert.match(mainRuntime, /new AutoEvaluationQueue/u);
+  assert.match(autoAcceleration, /allowSwitch && !actionTaken/u);
+  assert.match(mainRuntime, /event\.processes/u);
+  assert.match(mainRuntime, /explicitGameIds\.has\(gameId\)/u);
+  assert.match(mainRuntime, /autoLocalProcesses/u);
+  assert.match(
+    script,
+    /autoAccelerationInput\.addEventListener\('change', \(\) => void setGlobalAutoAcceleration\(\)\)/u,
   );
 });
 
@@ -143,6 +184,18 @@ test('game configuration uses accessible custom pickers and exposes monitored pr
   assert.match(script, /document\.createDocumentFragment\(\)/u);
   assert.match(html, /id="processList"/u);
   assert.match(mainRuntime, /processes: resolveProcesses\(gameId, game\.processes\)/u);
+});
+
+test('line refresh and dialog close controls have icon-sized accessible hit targets', () => {
+  assert.match(html, /id="refreshLinesButton"[^>]*aria-label="刷新线路"/u);
+  assert.doesNotMatch(html, /id="refreshLinesButton"[^>]*>\s*刷新线路/u);
+  assert.match(styles, /\.dialog-close\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/isu);
+  assert.match(styles, /\.dialog-header\s*\{[^}]*position:\s*sticky/isu);
+  assert.match(styles, /\.dialog-close\s*\{[^}]*-webkit-app-region:\s*no-drag/isu);
+});
+
+test('community process catalog recognizes the current Counter-Strike executable', () => {
+  assert.ok(communityProcesses.games['119'].includes('cs2.exe'));
 });
 
 test('product metadata version matches the launcher version', () => {

@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "excludedGameIds": [109, 274, 437, 860, 1342, 1921, 2529, 4371],
   "games": {
+    "119": ["cs2.exe", "csgo.exe"],
     "137": ["vermintide2_dx12.exe", "vermintide2.exe"],
     "188": ["Titanfall2.exe"],
     "192": ["Adjust.exe", "javaw.exe", "usched.exe", "java.exe"],

@@ -16,13 +16,21 @@ function normalizeProcessName(value) {
   return name.toLocaleLowerCase('en-US').endsWith('.exe') ? name : `${name}.exe`;
 }
 
+function normalizeExecutablePath(value) {
+  const executablePath = String(value ?? '').trim().replace(/^"|"$/gu, '').replace(/\//gu, '\\');
+  if (!executablePath || executablePath.length > 32767 || /[\0\r\n]/u.test(executablePath)) {
+    return '';
+  }
+  return executablePath;
+}
+
 function processKey(value) {
   return normalizeProcessName(value).toLocaleLowerCase('en-US');
 }
 
 class ProcessEventSource {
   constructor({
-    launcherPath,
+    executablePath,
     spawnFn = spawn,
     now = () => Date.now(),
     setTimeoutFn = setTimeout,
@@ -33,14 +41,14 @@ class ProcessEventSource {
     startupTimeoutMs = STARTUP_TIMEOUT_MS,
     staleTimeoutMs = STALE_TIMEOUT_MS,
   }) {
-    if (!String(launcherPath ?? '').trim()) {
-      throw new TypeError('ProcessEventSource requires a launcher path.');
+    if (!String(executablePath ?? '').trim()) {
+      throw new TypeError('ProcessEventSource requires an observer executable path.');
     }
     if (typeof spawnFn !== 'function') {
       throw new TypeError('ProcessEventSource requires a spawn function.');
     }
 
-    this._launcherPath = String(launcherPath).trim();
+    this._executablePath = String(executablePath).trim();
     this._spawn = spawnFn;
     this._now = now;
     this._setTimeout = setTimeoutFn;
@@ -91,6 +99,10 @@ class ProcessEventSource {
 
   get runningNames() {
     return [...this._nameCounts.keys()].sort((left, right) => left.localeCompare(right, 'en-US'));
+  }
+
+  get runningProcesses() {
+    return [...this._processes.entries()].map(([pid, process]) => ({ pid, ...process }));
   }
 
   isRunning(processName) {
@@ -164,7 +176,7 @@ class ProcessEventSource {
 
     let child;
     try {
-      child = this._spawn(this._launcherPath, ['--process-events'], {
+      child = this._spawn(this._executablePath, ['--process-events'], {
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -278,7 +290,10 @@ class ProcessEventSource {
       const pid = Number(item?.pid);
       const name = normalizeProcessName(item?.name);
       if (Number.isSafeInteger(pid) && pid > 0 && name) {
-        nextProcesses.set(pid, name);
+        nextProcesses.set(pid, {
+          name,
+          path: normalizeExecutablePath(item?.path),
+        });
       }
     }
     const previousPresence = new Set(this._nameCounts.keys());
@@ -311,16 +326,18 @@ class ProcessEventSource {
       return;
     }
     const affected = new Set();
-    const oldName = this._processes.get(pid);
+    const oldProcess = this._processes.get(pid);
+    const oldName = oldProcess?.name ?? '';
     if (event.type === 'started') {
       if (oldName && processKey(oldName) !== processKey(name)) {
         affected.add(processKey(oldName));
       }
       affected.add(processKey(name));
       const before = presenceFor(this._nameCounts, affected);
-      this._processes.set(pid, name);
+      const process = { name, path: normalizeExecutablePath(event.path) };
+      this._processes.set(pid, process);
       this._rebuildNameCounts();
-      this._emitPresenceChange(event.type, before, affected);
+      this._emitPresenceChange(event.type, before, affected, { pid, ...process });
       return;
     }
 
@@ -331,22 +348,26 @@ class ProcessEventSource {
     const before = presenceFor(this._nameCounts, affected);
     this._processes.delete(pid);
     this._rebuildNameCounts();
-    this._emitPresenceChange(event.type, before, affected);
+    this._emitPresenceChange(event.type, before, affected, { pid, ...oldProcess });
   }
 
-  _emitPresenceChange(kind, before, affected) {
+  _emitPresenceChange(kind, before, affected, process) {
     const changedNames = [...affected].filter(
       (name) => before.get(name) !== ((this._nameCounts.get(name) ?? 0) > 0),
     );
-    if (changedNames.length > 0) {
-      this._emit({ type: 'change', kind, names: changedNames, sequence: this._sequence });
-    }
+    this._emit({
+      type: 'change',
+      kind,
+      names: changedNames,
+      processes: [process],
+      sequence: this._sequence,
+    });
   }
 
   _rebuildNameCounts() {
     const counts = new Map();
-    for (const name of this._processes.values()) {
-      const key = processKey(name);
+    for (const process of this._processes.values()) {
+      const key = processKey(process.name);
       if (key) {
         counts.set(key, (counts.get(key) ?? 0) + 1);
       }
@@ -494,6 +515,7 @@ function messageOf(error) {
 }
 
 module.exports = {
+  normalizeExecutablePath,
   normalizeProcessName,
   ProcessEventSource,
 };

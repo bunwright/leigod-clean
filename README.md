@@ -31,6 +31,7 @@ LeigodClean 是一个面向 Windows 的雷神加速器精简桌面界面。它�
 ### 要求
 
 - Windows 10 或更高版本。
+- .NET Framework 4.7.2 或更高版本（已包含在受支持的 Windows 更新中）。
 - 已安装最新的雷神加速器 Windows 客户端。
 
 ### 首次运行
@@ -57,9 +58,10 @@ LeigodClean 是一个面向 Windows 的雷神加速器精简桌面界面。它�
 
 ## 工作方式
 
-LeigodClean 由两个本地组件组成：
+LeigodClean 由以下本地组件协作运行：
 
-- `LeigodClean.exe` 负责发现安装目录、部署内置运行时、维护可恢复的客户端入口补丁、启动官方客户端，并以隐藏子进程订阅 Windows 进程事件。
+- `LeigodClean.exe` 负责发现安装目录、部署内置运行时、维护可恢复的客户端入口补丁并启动官方客户端。
+- 轻量进程观察器通过 Windows Management Instrumentation 订阅进程事件，并定期校准当前进程快照。
 - 本地 Electron 运行时与官方客户端运行在同一进程中。官方窗口默认隐藏，LeigodClean 通过受限的本地 IPC 调用官方功能，并订阅账户与加速状态变化。
 
 账户凭据不写入 LeigodClean 设置或日志。可执行的运行时文件与官方客户端使用同一目录权限边界；用户可写目录只保存经验证的偏好设置与日志。自定义界面启用上下文隔离、关闭 Node.js 集成，并仅开放明确允许的 IPC 操作。
@@ -86,10 +88,10 @@ dotnet publish src\LeigodClean.Launcher\LeigodClean.Launcher.csproj `
   --runtime win-x64 `
   --self-contained true `
   --output publish\win-x64
-node scripts\verify-process-events.cjs publish\win-x64\LeigodClean.exe
+node scripts\verify-process-events.cjs src\LeigodClean.ProcessObserver\bin\Release\net472\LeigodClean.ProcessObserver.exe
 ```
 
-发布结果是一个自包含的 Windows x64 可执行文件。推送到 `main` 或创建 Pull Request 时，GitHub Actions 会执行格式检查、运行时语法检查、单元测试和 Release 构建，并保存可下载的构建产物及 SHA-256 校验文件。推送 `v*` 标签时，会在测试通过后创建 GitHub Release。
+发布结果是一个单文件 Windows x64 可执行文件。推送到 `main` 或创建 Pull Request 时，GitHub Actions 会执行格式检查、运行时语法检查、单元测试和 Release 构建，并保存可下载的构建产物及 SHA-256 校验文件。推送 `v*` 标签时，会在测试通过后创建 GitHub Release。
 
 仓库每天检查官方公开下载页的 Windows 版本号。发现新版本时，会建立兼容性检查 Issue 并生成候选构建；候选构建仍需在安装了官方客户端的 Windows 环境中完成启动、目录、线路、控制与监控验证，验证后再更新兼容性基线。
 
@@ -105,8 +107,9 @@ LeigodClean.exe --install-dir "D:\Applications\LeiGod_Acc"
 
 ```text
 src/
-  LeigodClean.Launcher/   Windows 启动器、运行时部署与 ASAR 入口维护
-  LeigodClean.Runtime/    Electron 主进程、官方桥接、进程监控和界面
+  LeigodClean.Launcher/          Windows 启动器、运行时部署与 ASAR 入口维护
+  LeigodClean.ProcessObserver/   轻量 Windows 进程事件观察器
+  LeigodClean.Runtime/           Electron 主进程、官方桥接、进程监控和界面
 tests/
   LeigodClean.Launcher.Tests/
 ```

@@ -69,6 +69,10 @@ function acceptLine(line) {
     return;
   }
   if (event.type === 'started') {
+    if (!String(event.path || '').toLocaleLowerCase('en-US').endsWith('ping.exe')) {
+      fail(`Observer did not report the probe executable path: ${event.path || '<empty>'}`);
+      return;
+    }
     sawStart = true;
   } else if (event.type === 'stopped') {
     sawStop = true;

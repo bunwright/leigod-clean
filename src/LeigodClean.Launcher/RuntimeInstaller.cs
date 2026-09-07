@@ -8,9 +8,12 @@ internal static class RuntimeInstaller
     private static readonly string[] Files =
     [
         "main.cjs",
+        "process-observer.exe",
         "auto-acceleration.cjs",
+        "local-games.cjs",
         "monitor.cjs",
         "process-events.cjs",
+        "official-tray.cjs",
         "official-bridge.cjs",
         "preload.cjs",
         "community-processes.json",

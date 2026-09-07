@@ -22,6 +22,13 @@ public sealed class OfficialClientLauncherTests
             string mainPath = Path.Combine(runtimeRoot, "main.cjs");
             Assert.True(File.Exists(mainPath));
             Assert.True(File.Exists(Path.Combine(runtimeRoot, "process-events.cjs")));
+            string observerPath = Path.Combine(runtimeRoot, "process-observer.exe");
+            Assert.True(File.Exists(observerPath));
+            using (FileStream observer = File.OpenRead(observerPath))
+            {
+                Assert.Equal('M', observer.ReadByte());
+                Assert.Equal('Z', observer.ReadByte());
+            }
             Assert.Equal(Environment.ProcessPath, File.ReadAllText(Path.Combine(runtimeRoot, "launcher.path")));
 
             File.WriteAllText(mainPath, "modified");

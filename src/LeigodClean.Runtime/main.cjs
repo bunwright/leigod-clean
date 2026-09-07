@@ -23,11 +23,19 @@ module.exports = function startLeigodClean(officialRequire) {
   const fs = require('node:fs');
   const path = require('node:path');
   const {
+    AutoEvaluationQueue,
     completeAutoWatchAttempt,
     defaultAutoSelection,
     evaluateAutoWatchState,
     resolveAutoGameIds,
+    selectAutoEventGames,
   } = require('./auto-acceleration.cjs');
+  const {
+    discoverInstalledGames,
+    executableLocation,
+    executableMatchesLocations,
+  } = require('./local-games.cjs');
+  const { installOfficialTraySuppression } = require('./official-tray.cjs');
   const { OfficialBridge } = require('./official-bridge.cjs');
   const { normalizeProcessName, ProcessEventSource } = require('./process-events.cjs');
   const {
@@ -99,12 +107,21 @@ module.exports = function startLeigodClean(officialRequire) {
   let autoCandidatesLoadedAt = 0;
   let autoIndexGeneration = 0;
   let autoIndexPromise = null;
-  let autoEvaluationPromise = null;
   const autoGameCache = new Map();
   const autoWatchStates = new Map();
   const autoProcessIndex = new Map();
-  const pendingAutoGameIds = new Set();
+  const autoGameLocations = new Map();
+  const autoLocalProcesses = new Map();
+  const autoUnresolvedGameIds = new Set();
   const autoRetryTimers = new Map();
+  const pendingAutoStartEvents = [];
+  let autoIndexRefreshTimer = null;
+  const autoEvaluationQueue = new AutoEvaluationQueue({
+    getOrder: () => resolveAutoGameIds(settings, autoCandidateIds),
+    evaluate: (gameId, allowSwitch) => evaluateAutoGame(gameId, allowSwitch),
+    canContinue: () => !closing,
+    onError: (error) => log(`Automatic acceleration queue failed: ${messageOf(error)}`),
+  });
   let lastOfficialState = {
     ready: false,
     isLogin: false,
@@ -127,11 +144,11 @@ module.exports = function startLeigodClean(officialRequire) {
 
   let processEvents = null;
   try {
-    const launcherPath = fs.readFileSync(launcherPathFile, 'utf8').trim();
-    if (!launcherPath || !fs.existsSync(launcherPath)) {
+    const observerPath = path.join(runtimeRoot, 'process-observer.exe');
+    if (!fs.existsSync(observerPath)) {
       throw new Error('无法定位 LeigodClean 进程事件服务。');
     }
-    processEvents = new ProcessEventSource({ launcherPath, log });
+    processEvents = new ProcessEventSource({ executablePath: observerPath, log });
   } catch (error) {
     log(`Process event service unavailable: ${messageOf(error)}`);
   }
@@ -182,12 +199,20 @@ module.exports = function startLeigodClean(officialRequire) {
     dialog.showErrorBox('LeigodClean', messageOf(error));
   });
 
+  let restoreOfficialTray = () => {};
   try {
+    restoreOfficialTray = installOfficialTraySuppression({
+      moduleLoader: require('node:module'),
+      electron,
+      log,
+    });
     officialRequire('bytenode');
     officialRequire('./main.jsc');
   } catch (error) {
     log(`Official client failed to start: ${error?.stack ?? messageOf(error)}`);
     dialog.showErrorBox('LeigodClean', `官方客户端启动失败：${messageOf(error)}`);
+  } finally {
+    restoreOfficialTray();
   }
 
   function patchOfficialIpc() {
@@ -548,7 +573,7 @@ module.exports = function startLeigodClean(officialRequire) {
         });
       case 'getGame': {
         const gameId = numericId(payload.gameId);
-        const game = await bridge.call('getGame', { gameId });
+        const game = await bridge.call('getGame', { gameId, liveProcesses: true });
         return { ...game, processes: resolveProcesses(gameId, game.processes) };
       }
       case 'getLines':
@@ -766,11 +791,18 @@ module.exports = function startLeigodClean(officialRequire) {
       .then(() => monitorWasUnavailable
         ? monitor.snapshot
         : monitor.processesChanged(event.names, fullSnapshot));
-    handleAutomaticProcessChange(event.names, fullSnapshot, event.kind, event.initial);
+    handleAutomaticProcessChange(
+      event.names,
+      fullSnapshot,
+      event.kind,
+      event.initial,
+      event.sequence,
+      event.processes,
+    );
     sendState();
   }
 
-  function handleAutomaticProcessChange(names, fullSnapshot, kind, initial) {
+  function handleAutomaticProcessChange(names, fullSnapshot, kind, initial, sequence, processes) {
     if (!processEvents?.snapshot.ready) {
       return;
     }
@@ -779,19 +811,116 @@ module.exports = function startLeigodClean(officialRequire) {
       return;
     }
 
-    const gameIds = new Set();
+    const nameGameIds = new Set();
+    const locationGameIds = new Set();
     const changedProcesses = normalizeProcesses(names);
-    for (const processName of changedProcesses) {
+    const processDetails = Array.isArray(processes) ? processes : [];
+    const hasProcessChanges = changedProcesses.length > 0 || processDetails.length > 0;
+    const eventProcessNames = normalizeProcesses([
+      ...changedProcesses,
+      ...processDetails.map((process) => process?.name),
+    ]);
+    for (const processName of eventProcessNames) {
       for (const gameId of autoProcessIndex.get(processKey(processName)) ?? []) {
-        gameIds.add(gameId);
+        nameGameIds.add(gameId);
       }
     }
-    queueAutoEvaluation(gameIds);
+    for (const process of processDetails) {
+      for (const [gameId, locations] of autoGameLocations) {
+        if (autoGameCache.has(gameId) &&
+          executableMatchesLocations(process?.path, locations)) {
+          locationGameIds.add(gameId);
+        }
+      }
+    }
+    const matched = selectAutoEventGames(nameGameIds, locationGameIds, {
+      accelerating: lastOfficialState.accStatus !== 'normal',
+      activeGameId: lastOfficialState.gameId,
+    });
+    const gameIds = new Set(matched.gameIds);
+    if (kind === 'started' && matched.activeHandoff) {
+      // Launcher-to-game handoffs often share process aliases with regional catalog
+      // entries. A process belonging to the active game must not switch variants.
+      queueAutoEvaluation(matched.gameIds);
+      return;
+    }
+    if (gameIds.size > 0) {
+      if (kind === 'started') {
+        log(`Automatic process start matched game(s): ${[...gameIds].join(', ')}`);
+      }
+      queueAutoEvaluation(gameIds, { allowSwitch: kind === 'started' });
+    }
 
-    if ((kind === 'started' || fullSnapshot) && changedProcesses.length > 0 &&
-      settings.autoAccelerationEnabled && gameIds.size === 0 &&
-      Date.now() - autoCandidatesLoadedAt >= 30000) {
-      void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
+    const hasAutomaticTargets = settings.autoAccelerationEnabled ||
+      Object.keys(settings.autoAccelerateGames).length > 0;
+    if ((kind === 'started' || fullSnapshot) && hasProcessChanges &&
+      hasAutomaticTargets && gameIds.size === 0 &&
+      (autoUnresolvedGameIds.size > 0 ||
+        Date.now() - autoCandidatesLoadedAt >= 5 * 60 * 1000)) {
+      if (kind === 'started') {
+        rememberPendingAutoStart(eventProcessNames, sequence, processDetails);
+      }
+      scheduleAutoIndexRefresh();
+    } else if (kind === 'started' && hasProcessChanges &&
+      gameIds.size === 0 && autoIndexPromise) {
+      rememberPendingAutoStart(eventProcessNames, sequence, processDetails);
+    }
+  }
+
+  function rememberPendingAutoStart(namesInput, sequence, processes) {
+    const names = normalizeProcesses(namesInput);
+    const details = (Array.isArray(processes) ? processes : [])
+      .filter((process) => process && typeof process === 'object')
+      .slice(0, 32)
+      .map((process) => ({ path: String(process.path ?? '').slice(0, 32767) }));
+    if (names.length === 0 && details.length === 0) {
+      return;
+    }
+    pendingAutoStartEvents.push({
+      names,
+      processes: details,
+      sequence: Number.isSafeInteger(Number(sequence)) ? Number(sequence) : 0,
+      createdAt: Date.now(),
+    });
+    if (pendingAutoStartEvents.length > 32) {
+      pendingAutoStartEvents.splice(0, pendingAutoStartEvents.length - 32);
+    }
+  }
+
+  function replayPendingAutoStarts() {
+    const minimumTime = Date.now() - 30000;
+    const pending = pendingAutoStartEvents.splice(0);
+    for (const event of pending) {
+      if (event.createdAt < minimumTime) {
+        continue;
+      }
+      const nameGameIds = new Set();
+      const locationGameIds = new Set();
+      for (const processName of event.names) {
+        for (const gameId of autoProcessIndex.get(processKey(processName)) ?? []) {
+          nameGameIds.add(gameId);
+        }
+      }
+      for (const process of event.processes) {
+        for (const [gameId, locations] of autoGameLocations) {
+          if (autoGameCache.has(gameId) &&
+            executableMatchesLocations(process.path, locations)) {
+            locationGameIds.add(gameId);
+          }
+        }
+      }
+      const matched = selectAutoEventGames(nameGameIds, locationGameIds, {
+        accelerating: lastOfficialState.accStatus !== 'normal',
+        activeGameId: lastOfficialState.gameId,
+      });
+      const gameIds = new Set(matched.gameIds);
+      if (matched.activeHandoff) {
+        queueAutoEvaluation(matched.gameIds);
+        continue;
+      }
+      if (gameIds.size > 0) {
+        queueAutoEvaluation(gameIds, { allowSwitch: true });
+      }
     }
   }
 
@@ -799,7 +928,15 @@ module.exports = function startLeigodClean(officialRequire) {
     autoIndexGeneration += 1;
     autoIndexPromise = null;
     autoProcessIndex.clear();
-    pendingAutoGameIds.clear();
+    autoGameLocations.clear();
+    autoLocalProcesses.clear();
+    autoUnresolvedGameIds.clear();
+    autoEvaluationQueue.clear();
+    pendingAutoStartEvents.length = 0;
+    if (autoIndexRefreshTimer) {
+      clearTimeout(autoIndexRefreshTimer);
+      autoIndexRefreshTimer = null;
+    }
     autoGameCache.clear();
     autoWatchStates.clear();
     for (const timer of autoRetryTimers.values()) {
@@ -828,41 +965,91 @@ module.exports = function startLeigodClean(officialRequire) {
       if (evaluate && pendingGeneration === autoIndexGeneration) {
         queueAutoEvaluation(resolveAutoGameIds(settings, autoCandidateIds));
       }
+      if (pendingGeneration === autoIndexGeneration) {
+        replayPendingAutoStarts();
+      }
       return;
     }
 
     const generation = ++autoIndexGeneration;
     const buildPromise = (async () => {
-      if (hasGlobalTargets && (forceCandidates || autoCandidatesLoadedAt === 0)) {
-        try {
-          const discovered = await bridge.call('autoCandidates');
-          if (generation !== autoIndexGeneration) {
-            return;
-          }
-          autoCandidateIds = Array.isArray(discovered) ? discovered : [];
-          autoCandidatesLoadedAt = Date.now();
-        } catch (error) {
-          if (generation === autoIndexGeneration) {
-            autoCandidatesLoadedAt = 0;
-            log(`Global automatic acceleration discovery failed: ${messageOf(error)}`);
+      if (forceCandidates || autoCandidatesLoadedAt === 0) {
+        let discovered = [];
+        if (hasGlobalTargets) {
+          try {
+            discovered = await bridge.call('autoCandidates');
+          } catch (error) {
+            log(`Official automatic acceleration discovery failed: ${messageOf(error)}`);
           }
         }
-      }
-
-      const gameIds = resolveAutoGameIds(settings, autoCandidateIds);
-      const entries = [];
-      for (const gameId of gameIds) {
-        try {
-          entries.push([gameId, await getAutoGame(gameId)]);
-        } catch (error) {
-          log(`Automatic acceleration index skipped game ${gameId}: ${messageOf(error)}`);
+        const sdkRoot = path.join(process.resourcesPath, 'leishenSdk');
+        const installed = readJson(path.join(sdkRoot, 'installed_app.json'), {});
+        let gamePaths = readJson(path.join(sdkRoot, 'game_path_updated.json'), null);
+        if (!Array.isArray(gamePaths)) {
+          gamePaths = readJson(path.join(sdkRoot, 'game_path.json'), []);
         }
+        const localGames = discoverInstalledGames(
+          installed,
+          gamePaths,
+          community.excludedGameIds,
+          { steamInstallLocations: discoverSteamInstallLocations(installed) },
+        );
         if (generation !== autoIndexGeneration) {
           return;
         }
+        autoCandidateIds = hasGlobalTargets
+          ? [
+            ...(Array.isArray(discovered) ? discovered : []),
+            ...localGames.map((game) => game.id),
+          ]
+          : [];
+        autoGameLocations.clear();
+        autoLocalProcesses.clear();
+        for (const game of localGames) {
+          if (game.locations.length > 0) {
+            autoGameLocations.set(String(game.id), game.locations);
+          }
+          if (game.processes.length > 0) {
+            autoLocalProcesses.set(String(game.id), game.processes);
+          }
+        }
+        autoCandidatesLoadedAt = Date.now();
       }
 
+      const gameIds = resolveAutoGameIds(settings, autoCandidateIds);
+      const explicitGameIds = new Set([
+        ...Object.keys(settings.autoAccelerateGames),
+        ...Object.keys(settings.gameSelections),
+      ]);
+      const entrySlots = new Array(gameIds.length);
+      let nextGameIndex = 0;
+      const workers = Array.from(
+        { length: Math.min(4, gameIds.length) },
+        async () => {
+          while (generation === autoIndexGeneration) {
+            const index = nextGameIndex++;
+            if (index >= gameIds.length) {
+              return;
+            }
+            const gameId = gameIds[index];
+            const liveProcesses = explicitGameIds.has(gameId) ||
+              !autoGameLocations.has(gameId);
+            try {
+              entrySlots[index] = [gameId, await getAutoGame(gameId, { liveProcesses })];
+            } catch (error) {
+              log(`Automatic acceleration index skipped game ${gameId}: ${messageOf(error)}`);
+            }
+          }
+        },
+      );
+      await Promise.all(workers);
+      if (generation !== autoIndexGeneration) {
+        return;
+      }
+      const entries = entrySlots.filter(Boolean);
+
       autoProcessIndex.clear();
+      autoUnresolvedGameIds.clear();
       const retainedIds = new Set(entries.map(([gameId]) => gameId));
       for (const [gameId, game] of entries) {
         for (const processName of game.processes) {
@@ -875,6 +1062,13 @@ module.exports = function startLeigodClean(officialRequire) {
           }
           autoProcessIndex.get(key).add(gameId);
         }
+        const hasAuthoritativeProcesses =
+          normalizeProcesses(settings.processOverrides[gameId]).length > 0 ||
+          normalizeProcesses(community.games[gameId]).length > 0;
+        if (!autoGameLocations.has(gameId) && !game.liveProcessesLoaded &&
+          !hasAuthoritativeProcesses) {
+          autoUnresolvedGameIds.add(gameId);
+        }
       }
       for (const gameId of autoWatchStates.keys()) {
         if (!retainedIds.has(gameId)) {
@@ -882,9 +1076,15 @@ module.exports = function startLeigodClean(officialRequire) {
           clearAutoRetry(gameId);
         }
       }
+      log(
+        `Automatic acceleration index ready: games=${entries.length} ` +
+        `processes=${autoProcessIndex.size} locations=${autoGameLocations.size} ` +
+        `unresolved=${autoUnresolvedGameIds.size}`,
+      );
       if (evaluate) {
         queueAutoEvaluation(gameIds);
       }
+      replayPendingAutoStarts();
     })();
     autoIndexPromise = buildPromise;
     try {
@@ -896,49 +1096,38 @@ module.exports = function startLeigodClean(officialRequire) {
     }
   }
 
-  function queueAutoEvaluation(gameIds) {
-    for (const value of gameIds ?? []) {
-      const gameId = String(value ?? '');
-      if (gameId) {
-        pendingAutoGameIds.add(gameId);
-      }
-    }
-    if (pendingAutoGameIds.size === 0) {
+  function queueAutoEvaluation(gameIds, { allowSwitch = false } = {}) {
+    autoEvaluationQueue.enqueue(gameIds, { allowSwitch });
+  }
+
+  function scheduleAutoIndexRefresh() {
+    if (autoIndexRefreshTimer || closing) {
       return;
     }
-    if (!autoEvaluationPromise) {
-      autoEvaluationPromise = drainAutoEvaluations().finally(() => {
-        autoEvaluationPromise = null;
-        if (pendingAutoGameIds.size > 0) {
-          queueAutoEvaluation([]);
-        }
-      });
-    }
+    const elapsed = Math.max(0, Date.now() - autoCandidatesLoadedAt);
+    const delay = Math.max(0, 5000 - elapsed);
+    autoIndexRefreshTimer = setTimeout(() => {
+      autoIndexRefreshTimer = null;
+      void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
+    }, delay);
+    autoIndexRefreshTimer?.unref?.();
   }
 
-  async function drainAutoEvaluations() {
-    while (pendingAutoGameIds.size > 0 && !closing) {
-      const order = resolveAutoGameIds(settings, autoCandidateIds);
-      const batch = order.filter((gameId) => pendingAutoGameIds.delete(gameId));
-      for (const gameId of batch) {
-        await evaluateAutoGame(gameId);
-      }
-      for (const stale of pendingAutoGameIds) {
-        if (!order.includes(stale)) {
-          pendingAutoGameIds.delete(stale);
-        }
-      }
-    }
-  }
-
-  async function evaluateAutoGame(gameId) {
+  async function evaluateAutoGame(gameId, allowSwitch = false) {
     const game = autoGameCache.get(gameId);
     if (!game || !processEvents?.snapshot.ready ||
       !resolveAutoGameIds(settings, autoCandidateIds).includes(gameId)) {
-      return;
+      return false;
     }
     try {
-      const running = game.processes.some((processName) => processEvents.isRunning(processName));
+      const runningByName = game.processes.some(
+        (processName) => processEvents.isRunning(processName),
+      );
+      const locations = autoGameLocations.get(gameId) ?? [];
+      const runningByLocation = locations.length > 0 && processEvents.runningProcesses.some(
+        (process) => executableMatchesLocations(process.path, locations),
+      );
+      const running = runningByName || runningByLocation;
       let watchState = autoWatchStates.get(gameId);
       const evaluation = evaluateAutoWatchState(watchState, {
         running,
@@ -946,22 +1135,26 @@ module.exports = function startLeigodClean(officialRequire) {
         accelerating: lastOfficialState.accStatus !== 'normal',
         activeGameId: lastOfficialState.gameId,
         gameId,
+        allowSwitch,
       });
       watchState = evaluation.state;
       autoWatchStates.set(gameId, watchState);
       if (!running) {
         clearAutoRetry(gameId);
-        return;
+        return false;
       }
+      let started = false;
       if (evaluation.shouldStart && !autoStartBusy) {
         clearAutoRetry(gameId);
-        const started = await triggerAutoAcceleration(gameId, game);
+        started = await triggerAutoAcceleration(gameId, game);
         watchState = completeAutoWatchAttempt(watchState, started);
         autoWatchStates.set(gameId, watchState);
       }
       scheduleAutoRetry(gameId, watchState);
+      return started;
     } catch (error) {
       log(`Automatic acceleration event failed for game ${gameId}: ${messageOf(error)}`);
+      return false;
     }
   }
 
@@ -987,15 +1180,23 @@ module.exports = function startLeigodClean(officialRequire) {
     }
   }
 
-  async function getAutoGame(gameId) {
-    if (autoGameCache.has(gameId)) {
-      return autoGameCache.get(gameId);
+  async function getAutoGame(gameId, { liveProcesses = false } = {}) {
+    const cached = autoGameCache.get(gameId);
+    if (cached && (!liveProcesses || cached.liveProcessesLoaded)) {
+      return cached;
     }
-    const game = await bridge.call('getGame', { gameId: numericId(gameId) });
+    const game = await bridge.call('getGame', {
+      gameId: numericId(gameId),
+      liveProcesses,
+    });
     const resolved = {
       title: game.title,
-      processes: resolveProcesses(gameId, game.processes),
+      processes: resolveProcesses(gameId, [
+        ...(Array.isArray(game.processes) ? game.processes : []),
+        ...(autoLocalProcesses.get(gameId) ?? []),
+      ]),
       areas: Array.isArray(game.areas) ? game.areas : [],
+      liveProcessesLoaded: liveProcesses && game.liveProcessesResolved === true,
     };
     autoGameCache.set(gameId, resolved);
     return resolved;
@@ -1061,7 +1262,10 @@ module.exports = function startLeigodClean(officialRequire) {
         monitor.stop('automatic-pause-disabled');
         return;
       }
-      const game = await bridge.call('getGame', { gameId: numericId(id) });
+      const game = await bridge.call('getGame', {
+        gameId: numericId(id),
+        liveProcesses: true,
+      });
       if (game.isFree || community.excludedGameIds.map(String).includes(id)) {
         monitor.stop('monitor-not-required');
         return;
@@ -1265,6 +1469,15 @@ module.exports = function startLeigodClean(officialRequire) {
       electron: process.versions.electron,
       official,
       state: combinedState(),
+      automaticAcceleration: {
+        globalEnabled: settings.autoAccelerationEnabled,
+        configuredGameIds: resolveAutoGameIds(settings, autoCandidateIds),
+        candidateCount: autoCandidateIds.length,
+        indexedProcessCount: autoProcessIndex.size,
+        indexedLocationCount: autoGameLocations.size,
+        unresolvedGameIds: [...autoUnresolvedGameIds],
+        pendingEvaluationCount: autoEvaluationQueue.pending,
+      },
     };
   }
 
@@ -1378,6 +1591,58 @@ module.exports = function startLeigodClean(officialRequire) {
     } catch {
       return fallback;
     }
+  }
+
+  function discoverSteamInstallLocations(installedApps) {
+    const applications = installedApps && typeof installedApps === 'object'
+      ? Object.entries(installedApps)
+      : [];
+    const steamApplication = applications.find(([key, application]) =>
+      String(key).trim().toLocaleLowerCase('en-US') === 'steam' ||
+      String(application?.display_name ?? '').trim().toLocaleLowerCase('en-US') === 'steam');
+    const steamLocation = executableLocation(steamApplication?.[1]?.install_location);
+    if (!steamLocation) {
+      return {};
+    }
+    const steamRoot = steamLocation.kind === 'file'
+      ? path.dirname(steamLocation.path)
+      : steamLocation.path;
+    const libraries = new Set([steamRoot]);
+    const folders = readText(path.join(steamRoot, 'steamapps', 'libraryfolders.vdf'), '');
+    for (const match of folders.matchAll(/"path"\s+"((?:\\.|[^"\\])+)"/gu)) {
+      const library = match[1].replace(/\\\\/gu, '\\').trim();
+      if (library) {
+        libraries.add(library);
+      }
+    }
+
+    const result = {};
+    for (const library of libraries) {
+      const steamApps = path.join(library, 'steamapps');
+      let manifests = [];
+      try {
+        manifests = fs.readdirSync(steamApps, { withFileTypes: true })
+          .filter((entry) => entry.isFile() && /^appmanifest_\d+\.acf$/iu.test(entry.name))
+          .slice(0, 1000);
+      } catch {
+        continue;
+      }
+      for (const manifest of manifests) {
+        const appId = manifest.name.match(/^appmanifest_(\d+)\.acf$/iu)?.[1] ?? '';
+        const content = readText(path.join(steamApps, manifest.name), '');
+        const installDirectory = content.match(/"installdir"\s+"([^"]+)"/iu)?.[1]
+          ?.replace(/\\\\/gu, '\\')
+          ?.trim();
+        if (!appId || !installDirectory) {
+          continue;
+        }
+        const location = path.join(steamApps, 'common', installDirectory);
+        if (fs.existsSync(location)) {
+          result[appId] = location;
+        }
+      }
+    }
+    return result;
   }
 
   function cloneJson(value) {
