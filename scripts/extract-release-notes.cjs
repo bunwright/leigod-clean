@@ -16,8 +16,8 @@ function extractReleaseNotes(changelog, tag) {
   }
   const sectionStart = match.index + match[0].length;
   const remainder = String(changelog).slice(sectionStart);
-  const nextSection = /^## \[/mu.exec(remainder);
-  const body = remainder.slice(0, nextSection?.index ?? remainder.length).trim();
+  const nextBoundary = /^(?:## \[|\[[^\]\r\n]+\]:\s)/mu.exec(remainder);
+  const body = remainder.slice(0, nextBoundary?.index ?? remainder.length).trim();
   if (!body) {
     throw new Error(`CHANGELOG.md section ${version} is empty.`);
   }

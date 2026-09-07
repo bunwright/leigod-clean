@@ -7,6 +7,7 @@
 ### 质量保证
 
 - 自动将版本化 changelog 内容同步到所有已发布的 GitHub Release 页面。
+- 确保最早版本的 Release 说明不会包含 changelog 的链接定义区。
 
 ## [0.4.1] - 2026-09-07
 

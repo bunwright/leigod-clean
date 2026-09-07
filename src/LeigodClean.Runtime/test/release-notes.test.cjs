@@ -21,3 +21,10 @@ test('release notes reject missing or malformed tags', () => {
   assert.throws(() => extractReleaseNotes(changelog, 'latest'), /Invalid release tag/u);
   assert.throws(() => extractReleaseNotes(changelog, 'v9.9.9'), /no section/u);
 });
+
+test('the final changelog section excludes link-reference definitions', () => {
+  const notes = extractReleaseNotes(changelog, 'v0.1.0');
+  assert.match(notes, /提供游戏搜索/u);
+  assert.doesNotMatch(notes, /^\[未发布\]:/mu);
+  assert.doesNotMatch(notes, /^\[0\.4\.1\]:/mu);
+});
