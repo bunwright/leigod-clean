@@ -158,18 +158,19 @@ test('process automation is event-driven and independent of the official native 
   assert.match(project, /PublishTrimmed>true/u);
 });
 
-test('official shell starts without taskbar painting and keeps the clean tray authoritative', () => {
+test('official shell preserves renderer startup while keeping the clean tray authoritative', () => {
   assert.match(mainRuntime, /installOfficialShellIsolation/u);
   assert.ok(
     mainRuntime.indexOf('installOfficialShellIsolation') < mainRuntime.indexOf("officialRequire('./main.jsc')"),
   );
   assert.match(mainRuntime, /finally\s*\{\s*restoreOfficialShell\(\)/u);
   assert.match(officialTray, /property === 'Tray'/u);
-  assert.match(officialTray, /property === 'BrowserWindow'/u);
-  assert.match(officialTray, /paintWhenInitiallyHidden = false/u);
-  assert.match(officialTray, /backgroundThrottling:\s*true/u);
-  assert.match(officialTray, /nativeSetOpacity\?\.\(0\)/u);
+  assert.doesNotMatch(officialTray, /property === 'BrowserWindow'/u);
+  assert.doesNotMatch(officialTray, /paintWhenInitiallyHidden/u);
+  assert.doesNotMatch(officialTray, /setBackgroundThrottling/u);
   assert.match(mainRuntime, /window\.setOpacity\?\.\(0\);\s*window\.hide\(\)/u);
+  assert.match(mainRuntime, /allowThrottling = !officialVisible && lastOfficialState\.ready === true/u);
+  assert.doesNotMatch(mainRuntime, /cancelCompatibilityFallback/u);
   assert.doesNotMatch(mainRuntime, /scheduleCompatibilityFallback|showing the official interface/u);
   assert.match(officialTray, /property === 'setAppUserModelId'/u);
   assert.match(mainRuntime, /tray = new Tray\(/u);
@@ -182,13 +183,19 @@ test('official shell starts without taskbar painting and keeps the clean tray au
   assert.match(project, /tray\.cjs/u);
 });
 
-test('shutdown is single-request, immediately concealed, and independent of official quit handlers', () => {
+test('shutdown requires one native confirmation and remains independent of official quit handlers', () => {
+  assert.match(mainRuntime, /createExitConfirmation/u);
   assert.match(mainRuntime, /createShutdownCoordinator/u);
-  assert.match(mainRuntime, /cleanWindow\.on\('close', \(event\) => \{\s*event\.preventDefault\(\);\s*void shutdown\.request\(\)/u);
-  assert.match(mainRuntime, /function quitFromTray\(\) \{\s*void shutdown\.request\(\)/u);
+  assert.match(mainRuntime, /cleanWindow\.on\('close', \(event\) => \{\s*event\.preventDefault\(\);\s*void exitConfirmation\.request\(\)/u);
+  assert.match(mainRuntime, /function quitFromTray\(\) \{\s*void exitConfirmation\.request\(\)/u);
+  assert.match(mainRuntime, /app\.on\('before-quit',[\s\S]{0,140}?exitConfirmation\.request\(\)/u);
+  assert.match(mainRuntime, /buttons:\s*\['退出', '取消'\]/u);
+  assert.match(mainRuntime, /defaultId:\s*1,[\s\S]{0,60}?cancelId:\s*1/u);
+  assert.match(mainRuntime, /dialog\.showMessageBox/u);
   assert.match(mainRuntime, /cleanWindow\?\.hide\?\.\(\)/u);
   assert.match(mainRuntime, /exit:\s*\(code\) => app\.exit\(code\)/u);
   assert.doesNotMatch(mainRuntime, /app\.quit\(\)/u);
+  assert.match(shutdownRuntime, /if \(pending\) \{\s*return pending/u);
   assert.match(shutdownRuntime, /if \(completion\) \{\s*return completion/u);
   assert.match(project, /shutdown\.cjs/u);
 });

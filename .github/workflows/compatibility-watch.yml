@@ -105,7 +105,7 @@ jobs:
         run: dotnet publish src/LeigodClean.Launcher/LeigodClean.Launcher.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore --output artifacts/win-x64
 
       - name: Verify process events
-        run: node scripts/verify-process-events.cjs artifacts/win-x64/LeigodClean.exe
+        run: node scripts/verify-process-events.cjs src/LeigodClean.ProcessObserver/bin/Release/net472/LeigodClean.ProcessObserver.exe
 
       - name: Create checksum
         shell: pwsh

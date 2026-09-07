@@ -38,7 +38,7 @@ module.exports = function startLeigodClean(officialRequire) {
   const { installOfficialShellIsolation } = require('./official-tray.cjs');
   const { OfficialBridge } = require('./official-bridge.cjs');
   const { normalizeProcessName, ProcessEventSource } = require('./process-events.cjs');
-  const { createShutdownCoordinator } = require('./shutdown.cjs');
+  const { createExitConfirmation, createShutdownCoordinator } = require('./shutdown.cjs');
   const {
     buildTrayMenuTemplate,
     createTrayStatusIcons,
@@ -197,15 +197,21 @@ module.exports = function startLeigodClean(officialRequire) {
     exit: (code) => app.exit(code),
     onError: (error, stage) => log(`Shutdown ${stage} failed: ${messageOf(error)}`),
   });
+  const exitConfirmation = createExitConfirmation({
+    confirm: confirmApplicationExit,
+    exit: () => shutdown.request(),
+    onError: (error) => log(`Exit confirmation failed: ${messageOf(error)}`),
+  });
   app.on('before-quit', (event) => {
     event?.preventDefault?.();
-    void shutdown.request();
+    void exitConfirmation.request();
   });
 
   patchOfficialIpc();
   observeWindows();
 
   app.whenReady().then(() => {
+    log('Electron application ready');
     registerCleanIpc();
     try {
       createTray();
@@ -213,6 +219,7 @@ module.exports = function startLeigodClean(officialRequire) {
       log(`Tray initialization failed: ${messageOf(error)}`);
     }
     createCleanWindow();
+    log('Clean window created');
     processEvents?.start();
     try {
       configureLoginItem(settings.launchAtLogin);
@@ -231,7 +238,6 @@ module.exports = function startLeigodClean(officialRequire) {
     restoreOfficialShell = installOfficialShellIsolation({
       moduleLoader: require('node:module'),
       electron,
-      shouldShowWindow: () => officialVisible,
       log,
     });
     officialRequire('bytenode');
@@ -292,6 +298,7 @@ module.exports = function startLeigodClean(officialRequire) {
 
       suppressOfficialWindow(window);
       window.webContents.on('did-finish-load', () => {
+        log(`Official renderer loaded id=${window.id}`);
         const url = window.webContents.getURL();
         const bounds = window.getBounds();
         const recognized = url.includes('renderer.asar/index.html');
@@ -305,7 +312,7 @@ module.exports = function startLeigodClean(officialRequire) {
     if (window.isDestroyed()) {
       return;
     }
-    window.webContents.setBackgroundThrottling?.(true);
+    setOfficialBackgroundPolicy(window);
     if (!officialVisible) {
       window.webContents.setAudioMuted?.(true);
       window.setOpacity?.(0);
@@ -323,6 +330,7 @@ module.exports = function startLeigodClean(officialRequire) {
             window.setOpacity?.(0);
             window.hide();
             window.setSkipTaskbar(true);
+            setOfficialBackgroundPolicy(window);
           }
         });
       }
@@ -360,7 +368,10 @@ module.exports = function startLeigodClean(officialRequire) {
       bridge.invalidate(window);
     }
     void bridge.install()
-      .then(() => startOfficialStateWatch(window))
+      .then(() => {
+        log(`Official bridge ready id=${window.id}`);
+        startOfficialStateWatch(window);
+      })
       .catch((error) => log(`Official bridge install deferred: ${messageOf(error)}`));
     if (!officialVisible) {
       hideOfficialWindow();
@@ -425,6 +436,7 @@ module.exports = function startLeigodClean(officialRequire) {
       showOfficialWindow();
     });
     cleanWindow.once('ready-to-show', () => {
+      log('Clean renderer ready to show');
       cleanWindow?.setIcon?.(appIcon);
       if (!startHidden || !tray) {
         cleanWindow?.show();
@@ -442,7 +454,7 @@ module.exports = function startLeigodClean(officialRequire) {
     });
     cleanWindow.on('close', (event) => {
       event.preventDefault();
-      void shutdown.request();
+      void exitConfirmation.request();
     });
     cleanWindow.on('closed', () => {
       cleanWindow = null;
@@ -595,7 +607,7 @@ module.exports = function startLeigodClean(officialRequire) {
   }
 
   function quitFromTray() {
-    void shutdown.request();
+    void exitConfirmation.request();
   }
 
   async function pauseFromTray() {
@@ -779,7 +791,9 @@ module.exports = function startLeigodClean(officialRequire) {
   async function invokeCleanMethod(method, payload) {
     switch (method) {
       case 'initialize':
+        log('Clean renderer initialization requested');
         await refreshOfficialState();
+        log(`Clean renderer initialization completed; officialReady=${lastOfficialState.ready}`);
         return combinedState();
       case 'searchGames': {
         const games = await bridge.call('searchGames', {
@@ -924,6 +938,7 @@ module.exports = function startLeigodClean(officialRequire) {
     try {
       acceptOfficialState(await bridge.call('state'));
     } catch (error) {
+      log(`Official state refresh failed: ${error?.stack ?? messageOf(error)}`);
       acceptOfficialState({
         ...lastOfficialState,
         ready: false,
@@ -945,6 +960,7 @@ module.exports = function startLeigodClean(officialRequire) {
     stopOfficialStateWatch();
     officialStateWatchWindowId = window.webContents.id;
     const generation = ++officialStateWatchGeneration;
+    log(`Official state subscription starting id=${window.webContents.id}`);
     void watchOfficialState(window, generation, 0);
   }
 
@@ -1542,7 +1558,7 @@ module.exports = function startLeigodClean(officialRequire) {
       sendState();
       return;
     }
-    officialWindow.webContents.setBackgroundThrottling?.(true);
+    setOfficialBackgroundPolicy(officialWindow);
     officialWindow.webContents.setAudioMuted?.(false);
     officialWindow.setOpacity?.(1);
     officialWindow.setSkipTaskbar(false);
@@ -1556,12 +1572,45 @@ module.exports = function startLeigodClean(officialRequire) {
       return;
     }
     officialVisible = false;
-    officialWindow.webContents.setBackgroundThrottling?.(true);
+    setOfficialBackgroundPolicy(officialWindow);
     officialWindow.webContents.setAudioMuted?.(true);
     officialWindow.setOpacity?.(0);
     officialWindow.hide();
     officialWindow.setSkipTaskbar(true);
     sendState();
+  }
+
+  function setOfficialBackgroundPolicy(window) {
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
+      return;
+    }
+    const allowThrottling = !officialVisible && lastOfficialState.ready === true;
+    window.webContents.setBackgroundThrottling?.(allowThrottling);
+  }
+
+  async function confirmApplicationExit() {
+    if (closing || !app.isReady?.()) {
+      return true;
+    }
+    const options = {
+      type: 'question',
+      buttons: ['退出', '取消'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: '退出 LeigodClean',
+      message: '要退出 LeigodClean 吗？',
+      detail: settings.pauseOnClose
+        ? '退出前将停止当前加速并暂停剩余时长。'
+        : '退出后自动加速与游戏进程监控将停止。',
+    };
+    const owner = cleanWindow && !cleanWindow.isDestroyed() && cleanWindow.isVisible()
+      ? cleanWindow
+      : null;
+    const result = owner
+      ? await dialog.showMessageBox(owner, options)
+      : await dialog.showMessageBox(options);
+    return result.response === 0;
   }
 
   function concealApplicationShell() {
@@ -1643,9 +1692,7 @@ module.exports = function startLeigodClean(officialRequire) {
     const previous = lastOfficialState;
     synchronizeTrayDuration(previous, next);
     lastOfficialState = { ...next, ready: Boolean(next.ready) };
-    if (lastOfficialState.ready) {
-      cancelCompatibilityFallback();
-    }
+    setOfficialBackgroundPolicy(officialWindow);
 
     const gameId = String(lastOfficialState.gameId || '');
     if (gameId && isAccelerationActive(lastOfficialState) &&
@@ -1666,6 +1713,7 @@ module.exports = function startLeigodClean(officialRequire) {
     }
 
     if (lastOfficialState.ready && !previous.ready) {
+      log('Official client state ready');
       void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
       void refreshTrayRecentGames();
     } else if (lastOfficialState.ready && settings.autoAccelerationEnabled && gameId &&

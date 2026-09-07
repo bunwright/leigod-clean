@@ -2,7 +2,57 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createShutdownCoordinator } = require('../shutdown.cjs');
+const { createExitConfirmation, createShutdownCoordinator } = require('../shutdown.cjs');
+
+test('exit confirmation coalesces duplicate requests and exits once when approved', async () => {
+  const events = [];
+  let resolveConfirmation = null;
+  const confirmation = createExitConfirmation({
+    confirm: () => new Promise((resolve) => {
+      events.push('confirm');
+      resolveConfirmation = resolve;
+    }),
+    exit: async () => events.push('exit'),
+  });
+
+  const first = confirmation.request();
+  const second = confirmation.request();
+  assert.equal(first, second);
+  assert.equal(confirmation.pending, true);
+  await Promise.resolve();
+  assert.deepEqual(events, ['confirm']);
+
+  resolveConfirmation(true);
+  assert.equal(await first, true);
+  assert.equal(confirmation.pending, false);
+  assert.deepEqual(events, ['confirm', 'exit']);
+});
+
+test('cancelling exit leaves the application open and permits a later request', async () => {
+  const decisions = [false, true];
+  let exits = 0;
+  const confirmation = createExitConfirmation({
+    confirm: async () => decisions.shift(),
+    exit: async () => { exits += 1; },
+  });
+
+  assert.equal(await confirmation.request(), false);
+  assert.equal(exits, 0);
+  assert.equal(await confirmation.request(), true);
+  assert.equal(exits, 1);
+});
+
+test('a confirmation failure is reported and does not exit', async () => {
+  const errors = [];
+  const confirmation = createExitConfirmation({
+    confirm: async () => { throw new Error('dialog failed'); },
+    exit: async () => assert.fail('exit must not run'),
+    onError: (error) => errors.push(error.message),
+  });
+
+  assert.equal(await confirmation.request(), false);
+  assert.deepEqual(errors, ['dialog failed']);
+});
 
 test('a single shutdown request conceals immediately and finishes exactly once', async () => {
   const events = [];

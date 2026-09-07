@@ -3,15 +3,11 @@
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {
-  createOfficialWindowOptions,
-  installOfficialShellIsolation,
-} = require('../official-tray.cjs');
+const { installOfficialShellIsolation } = require('../official-tray.cjs');
 
 function createHarness() {
   let nativeTrayCount = 0;
   let identityChanges = 0;
-  const windows = [];
   class NativeTray {
     constructor() {
       nativeTrayCount += 1;
@@ -21,32 +17,8 @@ function createHarness() {
     constructor(options) {
       super();
       this.options = options;
-      this.visible = Boolean(options.show);
-      this.skipTaskbar = Boolean(options.skipTaskbar);
-      this.muted = false;
-      this.backgroundThrottling = null;
-      this.focused = false;
-      this.opacity = 1;
-      this.hideCount = 0;
-      this.webContents = new EventEmitter();
-      this.webContents.setAudioMuted = (muted) => { this.muted = muted; };
-      this.webContents.setBackgroundThrottling = (allowed) => {
-        this.backgroundThrottling = allowed;
-      };
-      windows.push(this);
     }
-
-    show() { this.visible = true; }
-    showInactive() { this.visible = true; }
-    hide() {
-      this.visible = false;
-      this.hideCount += 1;
-    }
-    focus() { this.focused = true; }
-    setSkipTaskbar(skip) { this.skipTaskbar = skip; }
-    setOpacity(opacity) { this.opacity = opacity; }
   }
-  NativeBrowserWindow.getAllWindows = () => [...windows];
   const electron = {
     app: {
       name: 'LeiGod',
@@ -70,28 +42,11 @@ function createHarness() {
   };
 }
 
-test('hidden official windows are created without taskbar or initial painting', () => {
-  const options = createOfficialWindowOptions({
-    show: true,
-    skipTaskbar: false,
-    webPreferences: { sandbox: true, backgroundThrottling: false },
-  });
-  assert.equal(options.show, false);
-  assert.equal(options.skipTaskbar, true);
-  assert.deepEqual(options.webPreferences, {
-    sandbox: true,
-    backgroundThrottling: true,
-    paintWhenInitiallyHidden: false,
-  });
-});
-
-test('suppresses the official shell while preserving an explicitly opened fallback window', () => {
+test('suppresses the official tray and identity without replacing BrowserWindow', () => {
   const harness = createHarness();
-  let visible = false;
   const restore = installOfficialShellIsolation({
     moduleLoader: harness.moduleLoader,
     electron: harness.electron,
-    shouldShowWindow: () => visible,
     log: (message) => harness.messages.push(message),
   });
 
@@ -106,57 +61,26 @@ test('suppresses the official shell while preserving an explicitly opened fallba
   assert.equal(tray.setToolTip('LeiGod'), tray);
   assert.deepEqual(tray.getBounds(), { x: 0, y: 0, width: 0, height: 0 });
 
-  const window = new intercepted.BrowserWindow({
+  assert.equal(intercepted.BrowserWindow, harness.electron.BrowserWindow);
+  const options = {
     show: true,
-    webPreferences: { sandbox: false },
-  });
-  assert.equal(window.options.show, false);
-  assert.equal(window.options.skipTaskbar, true);
-  assert.equal(window.options.webPreferences.paintWhenInitiallyHidden, false);
-  assert.equal(window.options.webPreferences.backgroundThrottling, true);
-  assert.equal(window.backgroundThrottling, true);
-  assert.equal(window.muted, true);
-  assert.equal(window.opacity, 0);
-  assert.equal(window.hideCount, 1);
-  window.show();
-  window.focus();
-  window.setSkipTaskbar(false);
-  window.setOpacity(0.8);
-  assert.equal(window.visible, false);
-  assert.equal(window.focused, false);
-  assert.equal(window.skipTaskbar, true);
-  assert.equal(window.opacity, 0);
-  assert.equal(window.hideCount, 2);
+    skipTaskbar: false,
+    webPreferences: { sandbox: false, backgroundThrottling: false },
+  };
+  const window = new intercepted.BrowserWindow(options);
+  assert.equal(window.options, options);
+  assert.equal(window.options.show, true);
+  assert.equal(window.options.skipTaskbar, false);
+  assert.equal(window.options.webPreferences.backgroundThrottling, false);
+  assert.equal(Object.hasOwn(window.options.webPreferences, 'paintWhenInitiallyHidden'), false);
 
   let readyToShowCount = 0;
   window.on('ready-to-show', () => { readyToShowCount += 1; });
-  window.webContents.emit('did-finish-load');
-  window.webContents.emit('did-finish-load');
+  window.emit('ready-to-show');
   assert.equal(readyToShowCount, 1);
-  assert.equal(window.visible, false);
 
-  visible = true;
-  window.show();
-  window.focus();
-  window.setSkipTaskbar(false);
-  assert.equal(window.visible, true);
-  assert.equal(window.focused, true);
-  assert.equal(window.skipTaskbar, false);
-  assert.equal(window.muted, false);
-  assert.equal(window.opacity, 1);
-  window.setOpacity(0.8);
-  assert.equal(window.opacity, 0.8);
-  window.hide();
-  assert.equal(window.visible, false);
-  assert.equal(window.muted, true);
-  assert.equal(window.opacity, 0);
-
-  assert.equal(intercepted.BrowserWindow.getAllWindows().length, 1);
   assert.equal(harness.moduleLoader._load('node:path'), harness.fallback);
-  assert.deepEqual(harness.messages, [
-    'Official tray icon suppressed',
-    'Official window created in background rendering mode',
-  ]);
+  assert.deepEqual(harness.messages, ['Official tray icon suppressed']);
 
   tray.destroy();
   assert.equal(tray.isDestroyed(), true);

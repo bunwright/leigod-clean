@@ -4,6 +4,24 @@
 
 ## [未发布]
 
+## [0.4.3] - 2026-09-07
+
+### 修复
+
+- 修复 0.4.2 中官方状态已就绪后被错误重置，导致主界面持续显示加载动画的问题。
+- 保留官方渲染器的原生启动生命周期，并仅在窗口创建后隐藏官方界面，兼顾后台初始化与无干扰启动。
+- 官方状态初始化完成前保持渲染器活跃，完成后再恢复后台节流。
+
+### 新增
+
+- 退出前显示原生确认对话框；标题栏、托盘及系统退出请求共用同一确认流程。
+
+### 质量保证
+
+- 新增完整的官方状态就绪回归测试，并覆盖退出确认的确认、取消、重复请求和异常路径。
+- 增加启动阶段日志，便于区分窗口创建、渲染器加载、桥接安装与状态同步阶段。
+- 修正兼容性构建中的进程事件校验目标，使其与常规 CI 和 Release 流程一致。
+
 ## [0.4.2] - 2026-09-07
 
 ### 修复
@@ -99,7 +117,8 @@
 - 支持系统托盘、开机启动、官方界面回退入口及自动维护客户端入口补丁。
 - 建立 Windows 单文件构建、测试、校验和 GitHub Release 流程。
 
-[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.4.2...HEAD
+[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/bunwright/leigod-clean/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/bunwright/leigod-clean/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/bunwright/leigod-clean/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/bunwright/leigod-clean/compare/v0.3.0...v0.4.0

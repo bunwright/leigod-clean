@@ -11,8 +11,9 @@ const product = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'product.j
 
 test('release notes are extracted from exactly one changelog version', () => {
   const notes = extractReleaseNotes(changelog, `v${product.version}`);
-  assert.match(notes, /窗口关闭与托盘退出共用幂等关闭流程/u);
-  assert.match(notes, /持续隐藏官方窗口/u);
+  assert.match(notes, /官方状态已就绪后被错误重置/u);
+  assert.match(notes, /退出前显示原生确认对话框/u);
+  assert.doesNotMatch(notes, /窗口关闭与托盘退出共用幂等关闭流程/u);
   assert.doesNotMatch(notes, /修复首次启动读取设置/u);
   assert.match(notes, /blob\/main\/CHANGELOG\.md/u);
 });

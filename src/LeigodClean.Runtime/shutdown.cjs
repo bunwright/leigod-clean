@@ -1,5 +1,51 @@
 'use strict';
 
+function createExitConfirmation({
+  confirm,
+  exit,
+  onError = () => {},
+}) {
+  if (typeof confirm !== 'function' || typeof exit !== 'function') {
+    throw new TypeError('Exit confirmation and exit operations are required.');
+  }
+
+  let pending = null;
+
+  function request() {
+    if (pending) {
+      return pending;
+    }
+    pending = Promise.resolve()
+      .then(confirm)
+      .then(async (confirmed) => {
+        if (confirmed !== true) {
+          return false;
+        }
+        await exit();
+        return true;
+      })
+      .catch((error) => {
+        try {
+          onError(error);
+        } catch {
+          // A confirmation failure must leave the application open.
+        }
+        return false;
+      })
+      .finally(() => {
+        pending = null;
+      });
+    return pending;
+  }
+
+  return Object.freeze({
+    request,
+    get pending() {
+      return pending !== null;
+    },
+  });
+}
+
 function createShutdownCoordinator({
   conceal,
   prepare,
@@ -85,4 +131,4 @@ function createShutdownCoordinator({
   });
 }
 
-module.exports = { createShutdownCoordinator };
+module.exports = { createExitConfirmation, createShutdownCoordinator };
