@@ -13,6 +13,7 @@ internal static class RuntimeInstaller
         "local-games.cjs",
         "monitor.cjs",
         "process-events.cjs",
+        "shutdown.cjs",
         "official-tray.cjs",
         "tray.cjs",
         "official-bridge.cjs",

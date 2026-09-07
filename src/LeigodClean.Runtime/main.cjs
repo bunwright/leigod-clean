@@ -38,6 +38,7 @@ module.exports = function startLeigodClean(officialRequire) {
   const { installOfficialShellIsolation } = require('./official-tray.cjs');
   const { OfficialBridge } = require('./official-bridge.cjs');
   const { normalizeProcessName, ProcessEventSource } = require('./process-events.cjs');
+  const { createShutdownCoordinator } = require('./shutdown.cjs');
   const {
     buildTrayMenuTemplate,
     createTrayStatusIcons,
@@ -109,7 +110,6 @@ module.exports = function startLeigodClean(officialRequire) {
   let officialStateWatchGeneration = 0;
   let officialStateWatchWindowId = 0;
   let officialStateWatchRetryTimer = null;
-  let bridgeFallbackTimer = null;
   let pendingStartUntil = 0;
   let monitoredGameId = '';
   let autoPauseInProgress = false;
@@ -189,6 +189,18 @@ module.exports = function startLeigodClean(officialRequire) {
   } else {
     monitor.observerUnavailable('进程事件服务不可用。');
   }
+
+  const shutdown = createShutdownCoordinator({
+    conceal: concealApplicationShell,
+    prepare: prepareApplicationClose,
+    dispose: disposeApplication,
+    exit: (code) => app.exit(code),
+    onError: (error, stage) => log(`Shutdown ${stage} failed: ${messageOf(error)}`),
+  });
+  app.on('before-quit', (event) => {
+    event?.preventDefault?.();
+    void shutdown.request();
+  });
 
   patchOfficialIpc();
   observeWindows();
@@ -296,16 +308,19 @@ module.exports = function startLeigodClean(officialRequire) {
     window.webContents.setBackgroundThrottling?.(true);
     if (!officialVisible) {
       window.webContents.setAudioMuted?.(true);
+      window.setOpacity?.(0);
       window.hide();
       window.setSkipTaskbar(true);
     } else {
       window.webContents.setAudioMuted?.(false);
+      window.setOpacity?.(1);
       window.setSkipTaskbar(false);
     }
     window.on('show', () => {
       if (!officialVisible && !window.isDestroyed()) {
         setImmediate(() => {
           if (!officialVisible && !window.isDestroyed()) {
+            window.setOpacity?.(0);
             window.hide();
             window.setSkipTaskbar(true);
           }
@@ -347,32 +362,9 @@ module.exports = function startLeigodClean(officialRequire) {
     void bridge.install()
       .then(() => startOfficialStateWatch(window))
       .catch((error) => log(`Official bridge install deferred: ${messageOf(error)}`));
-    scheduleCompatibilityFallback();
-
-    if (!officialVisible && cleanWindow && !cleanWindow.isDestroyed() && cleanWindow.isVisible()) {
+    if (!officialVisible) {
       hideOfficialWindow();
     }
-  }
-
-  function scheduleCompatibilityFallback() {
-    if (bridgeFallbackTimer) {
-      clearTimeout(bridgeFallbackTimer);
-    }
-    bridgeFallbackTimer = setTimeout(() => {
-      bridgeFallbackTimer = null;
-      if (!lastOfficialState.ready && officialWindow && !officialWindow.isDestroyed()) {
-        log('Official bridge did not become ready; showing the official interface');
-        showOfficialWindow();
-      }
-    }, 20_000);
-  }
-
-  function cancelCompatibilityFallback() {
-    if (!bridgeFallbackTimer) {
-      return;
-    }
-    clearTimeout(bridgeFallbackTimer);
-    bridgeFallbackTimer = null;
   }
 
   function createCleanWindow() {
@@ -449,12 +441,8 @@ module.exports = function startLeigodClean(officialRequire) {
       }
     });
     cleanWindow.on('close', (event) => {
-      if (closing) {
-        return;
-      }
       event.preventDefault();
-      closing = true;
-      void closeApplication();
+      void shutdown.request();
     });
     cleanWindow.on('closed', () => {
       cleanWindow = null;
@@ -607,14 +595,7 @@ module.exports = function startLeigodClean(officialRequire) {
   }
 
   function quitFromTray() {
-    if (cleanWindow && !cleanWindow.isDestroyed()) {
-      cleanWindow.close();
-      return;
-    }
-    if (!closing) {
-      closing = true;
-      void closeApplication();
-    }
+    void shutdown.request();
   }
 
   async function pauseFromTray() {
@@ -1556,12 +1537,14 @@ module.exports = function startLeigodClean(officialRequire) {
   }
 
   function showOfficialWindow() {
+    officialVisible = true;
     if (!officialWindow || officialWindow.isDestroyed()) {
+      sendState();
       return;
     }
-    officialVisible = true;
     officialWindow.webContents.setBackgroundThrottling?.(true);
     officialWindow.webContents.setAudioMuted?.(false);
+    officialWindow.setOpacity?.(1);
     officialWindow.setSkipTaskbar(false);
     officialWindow.show();
     officialWindow.focus();
@@ -1575,13 +1558,26 @@ module.exports = function startLeigodClean(officialRequire) {
     officialVisible = false;
     officialWindow.webContents.setBackgroundThrottling?.(true);
     officialWindow.webContents.setAudioMuted?.(true);
+    officialWindow.setOpacity?.(0);
     officialWindow.hide();
     officialWindow.setSkipTaskbar(true);
     sendState();
   }
 
-  async function closeApplication() {
-    const forceCloseTimer = setTimeout(() => finishClose(), 5000);
+  function concealApplicationShell() {
+    closing = true;
+    officialVisible = false;
+    cleanWindow?.hide?.();
+    if (officialWindow && !officialWindow.isDestroyed()) {
+      officialWindow.setOpacity?.(0);
+      officialWindow.hide();
+      officialWindow.setSkipTaskbar(true);
+    }
+    tray?.destroy();
+    tray = null;
+  }
+
+  async function prepareApplicationClose() {
     try {
       monitoredGameId = '';
       monitor.stop('application-close');
@@ -1591,29 +1587,22 @@ module.exports = function startLeigodClean(officialRequire) {
       }
     } catch (error) {
       log(`Pause during close failed: ${messageOf(error)}`);
-    } finally {
-      clearTimeout(forceCloseTimer);
-      finishClose();
     }
   }
 
-  function finishClose() {
+  function disposeApplication() {
     stopOfficialStateWatch();
     processEvents?.stop();
     for (const timer of autoRetryTimers.values()) {
       clearTimeout(timer);
     }
     autoRetryTimers.clear();
-    cancelCompatibilityFallback();
     if (officialWindow && !officialWindow.isDestroyed()) {
       officialWindow.destroy();
     }
     if (cleanWindow && !cleanWindow.isDestroyed()) {
       cleanWindow.destroy();
     }
-    tray?.destroy();
-    tray = null;
-    app.quit();
   }
 
   function combinedState() {

@@ -26,6 +26,8 @@ function createHarness() {
       this.muted = false;
       this.backgroundThrottling = null;
       this.focused = false;
+      this.opacity = 1;
+      this.hideCount = 0;
       this.webContents = new EventEmitter();
       this.webContents.setAudioMuted = (muted) => { this.muted = muted; };
       this.webContents.setBackgroundThrottling = (allowed) => {
@@ -36,9 +38,13 @@ function createHarness() {
 
     show() { this.visible = true; }
     showInactive() { this.visible = true; }
-    hide() { this.visible = false; }
+    hide() {
+      this.visible = false;
+      this.hideCount += 1;
+    }
     focus() { this.focused = true; }
     setSkipTaskbar(skip) { this.skipTaskbar = skip; }
+    setOpacity(opacity) { this.opacity = opacity; }
   }
   NativeBrowserWindow.getAllWindows = () => [...windows];
   const electron = {
@@ -110,12 +116,17 @@ test('suppresses the official shell while preserving an explicitly opened fallba
   assert.equal(window.options.webPreferences.backgroundThrottling, true);
   assert.equal(window.backgroundThrottling, true);
   assert.equal(window.muted, true);
+  assert.equal(window.opacity, 0);
+  assert.equal(window.hideCount, 1);
   window.show();
   window.focus();
   window.setSkipTaskbar(false);
+  window.setOpacity(0.8);
   assert.equal(window.visible, false);
   assert.equal(window.focused, false);
   assert.equal(window.skipTaskbar, true);
+  assert.equal(window.opacity, 0);
+  assert.equal(window.hideCount, 2);
 
   let readyToShowCount = 0;
   window.on('ready-to-show', () => { readyToShowCount += 1; });
@@ -132,9 +143,13 @@ test('suppresses the official shell while preserving an explicitly opened fallba
   assert.equal(window.focused, true);
   assert.equal(window.skipTaskbar, false);
   assert.equal(window.muted, false);
+  assert.equal(window.opacity, 1);
+  window.setOpacity(0.8);
+  assert.equal(window.opacity, 0.8);
   window.hide();
   assert.equal(window.visible, false);
   assert.equal(window.muted, true);
+  assert.equal(window.opacity, 0);
 
   assert.equal(intercepted.BrowserWindow.getAllWindows().length, 1);
   assert.equal(harness.moduleLoader._load('node:path'), harness.fallback);

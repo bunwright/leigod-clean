@@ -5,7 +5,7 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <AssemblyName>LeigodClean</AssemblyName>
     <RootNamespace>LeigodClean</RootNamespace>
-    <Version>0.4.1</Version>
+    <Version>0.4.2</Version>
     <Authors>bunwright</Authors>
     <Product>LeigodClean</Product>
     <Description>Focused desktop interface and process-aware automation for Leigod on Windows.</Description>
@@ -35,6 +35,7 @@
     <EmbeddedResource Include="..\LeigodClean.Runtime\local-games.cjs" LogicalName="Runtime/local-games.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\monitor.cjs" LogicalName="Runtime/monitor.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\process-events.cjs" LogicalName="Runtime/process-events.cjs" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\shutdown.cjs" LogicalName="Runtime/shutdown.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\official-tray.cjs" LogicalName="Runtime/official-tray.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\tray.cjs" LogicalName="Runtime/tray.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\official-bridge.cjs" LogicalName="Runtime/official-bridge.cjs" />

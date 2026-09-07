@@ -19,6 +19,7 @@ const autoAcceleration = fs.readFileSync(
   'utf8',
 );
 const officialTray = fs.readFileSync(path.join(rendererRoot, '..', 'official-tray.cjs'), 'utf8');
+const shutdownRuntime = fs.readFileSync(path.join(rendererRoot, '..', 'shutdown.cjs'), 'utf8');
 const trayRuntime = fs.readFileSync(path.join(rendererRoot, '..', 'tray.cjs'), 'utf8');
 const communityProcesses = JSON.parse(fs.readFileSync(
   path.join(rendererRoot, '..', 'community-processes.json'),
@@ -60,7 +61,7 @@ test('clean loading window is registered before the official runtime and officia
   assert.match(mainRuntime, /function suppressOfficialWindow\(window\)/u);
   assert.match(mainRuntime, /if \(!officialVisible\) \{[\s\S]{0,180}?window\.hide\(\)/u);
   assert.match(mainRuntime, /creatingCleanWindow \|\| window\.getTitle\(\) === 'LeigodClean'/u);
-  assert.match(mainRuntime, /showing the official interface/u);
+  assert.doesNotMatch(mainRuntime, /showing the official interface/u);
   assert.match(mainRuntime, /Clean renderer failed to load/u);
   assert.match(mainRuntime, /Clean renderer exited unexpectedly/u);
   assert.match(mainRuntime, /officialVisible = true;\s*showOfficialWindow\(\)/u);
@@ -117,6 +118,12 @@ test('primary acceleration control and switchable telemetry occupy the game work
   assert.match(script, /setTimeout\([\s\S]*2_000/u);
   assert.match(telemetryScript, /MAX_POINTS = 480/u);
   assert.match(styles, /\.workspace-grid\s*\{[^}]*align-items:\s*stretch/isu);
+  assert.match(script, /closest\('\.session-panel'\)\?\.classList\.toggle\('charting', chartVisible\)/u);
+  assert.match(
+    styles,
+    /\.session-panel\.charting \.monitor-detail,\s*\.session-panel\.charting \.process-overview\s*\{[^}]*display:\s*none/isu,
+  );
+  assert.match(styles, /\.telemetry-canvas-wrap\s*\{[^}]*height:\s*74px/isu);
 });
 
 test('acceleration state belongs to one game and active games are promoted visibly', () => {
@@ -161,6 +168,9 @@ test('official shell starts without taskbar painting and keeps the clean tray au
   assert.match(officialTray, /property === 'BrowserWindow'/u);
   assert.match(officialTray, /paintWhenInitiallyHidden = false/u);
   assert.match(officialTray, /backgroundThrottling:\s*true/u);
+  assert.match(officialTray, /nativeSetOpacity\?\.\(0\)/u);
+  assert.match(mainRuntime, /window\.setOpacity\?\.\(0\);\s*window\.hide\(\)/u);
+  assert.doesNotMatch(mainRuntime, /scheduleCompatibilityFallback|showing the official interface/u);
   assert.match(officialTray, /property === 'setAppUserModelId'/u);
   assert.match(mainRuntime, /tray = new Tray\(/u);
   assert.match(mainRuntime, /tray\.on\('right-click', showTrayContextMenu\)/u);
@@ -170,6 +180,17 @@ test('official shell starts without taskbar painting and keeps the clean tray au
   assert.doesNotMatch(trayRuntime, /打开官方客户端/u);
   assert.match(project, /official-tray\.cjs/u);
   assert.match(project, /tray\.cjs/u);
+});
+
+test('shutdown is single-request, immediately concealed, and independent of official quit handlers', () => {
+  assert.match(mainRuntime, /createShutdownCoordinator/u);
+  assert.match(mainRuntime, /cleanWindow\.on\('close', \(event\) => \{\s*event\.preventDefault\(\);\s*void shutdown\.request\(\)/u);
+  assert.match(mainRuntime, /function quitFromTray\(\) \{\s*void shutdown\.request\(\)/u);
+  assert.match(mainRuntime, /cleanWindow\?\.hide\?\.\(\)/u);
+  assert.match(mainRuntime, /exit:\s*\(code\) => app\.exit\(code\)/u);
+  assert.doesNotMatch(mainRuntime, /app\.quit\(\)/u);
+  assert.match(shutdownRuntime, /if \(completion\) \{\s*return completion/u);
+  assert.match(project, /shutdown\.cjs/u);
 });
 
 test('preferences use a responsive two-column layout without requiring desktop scrolling', () => {

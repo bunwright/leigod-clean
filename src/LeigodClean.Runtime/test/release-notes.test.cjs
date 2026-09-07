@@ -11,9 +11,9 @@ const product = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'product.j
 
 test('release notes are extracted from exactly one changelog version', () => {
   const notes = extractReleaseNotes(changelog, `v${product.version}`);
-  assert.match(notes, /修复首次启动读取设置/u);
-  assert.match(notes, /主进程冷启动冒烟测试/u);
-  assert.doesNotMatch(notes, /托盘图标增加绿色状态标记/u);
+  assert.match(notes, /窗口关闭与托盘退出共用幂等关闭流程/u);
+  assert.match(notes, /持续隐藏官方窗口/u);
+  assert.doesNotMatch(notes, /修复首次启动读取设置/u);
   assert.match(notes, /blob\/main\/CHANGELOG\.md/u);
 });
 
@@ -26,5 +26,5 @@ test('the final changelog section excludes link-reference definitions', () => {
   const notes = extractReleaseNotes(changelog, 'v0.1.0');
   assert.match(notes, /提供游戏搜索/u);
   assert.doesNotMatch(notes, /^\[未发布\]:/mu);
-  assert.doesNotMatch(notes, /^\[0\.4\.1\]:/mu);
+  assert.doesNotMatch(notes, /^\[[^\]\r\n]+\]:/mu);
 });

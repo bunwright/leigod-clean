@@ -4,8 +4,17 @@
 
 ## [未发布]
 
+## [0.4.2] - 2026-09-07
+
+### 修复
+
+- 使窗口关闭与托盘退出共用幂等关闭流程，首次操作即隐藏应用并完成退出。
+- 取消官方服务未就绪时自动打开官方界面的回退，并在后台阶段持续隐藏官方窗口。
+- 将延迟与丢包图表约束在运行状态卡片内，避免切换指标后撑高默认窗口。
+
 ### 质量保证
 
+- 新增关闭流程的单次触发与超时收尾测试，并扩展官方窗口可见性和图表布局验证。
 - 自动将版本化 changelog 内容同步到所有已发布的 GitHub Release 页面。
 - 确保最早版本的 Release 说明不会包含 changelog 的链接定义区。
 
@@ -90,7 +99,8 @@
 - 支持系统托盘、开机启动、官方界面回退入口及自动维护客户端入口补丁。
 - 建立 Windows 单文件构建、测试、校验和 GitHub Release 流程。
 
-[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.4.1...HEAD
+[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/bunwright/leigod-clean/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/bunwright/leigod-clean/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/bunwright/leigod-clean/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bunwright/leigod-clean/compare/v0.2.0...v0.3.0

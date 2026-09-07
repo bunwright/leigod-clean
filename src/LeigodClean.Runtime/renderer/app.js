@@ -679,6 +679,7 @@ function renderTelemetryFocus(acceleration = viewState.accelerationContext(
   }
   const chartVisible = model.selectedMetric !== 'duration';
   elements.telemetryFocus.classList.toggle('charting', chartVisible);
+  elements.telemetryFocus.closest('.session-panel')?.classList.toggle('charting', chartVisible);
   elements.telemetryChart.hidden = !chartVisible;
   if (chartVisible) {
     scheduleTelemetrySampling(acceleration);

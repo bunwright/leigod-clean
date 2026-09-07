@@ -22,6 +22,7 @@ public sealed class OfficialClientLauncherTests
             string mainPath = Path.Combine(runtimeRoot, "main.cjs");
             Assert.True(File.Exists(mainPath));
             Assert.True(File.Exists(Path.Combine(runtimeRoot, "process-events.cjs")));
+            Assert.True(File.Exists(Path.Combine(runtimeRoot, "shutdown.cjs")));
             string observerPath = Path.Combine(runtimeRoot, "process-observer.exe");
             Assert.True(File.Exists(observerPath));
             using (FileStream observer = File.OpenRead(observerPath))

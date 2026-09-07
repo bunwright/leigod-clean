@@ -88,20 +88,17 @@ function installOfficialShellIsolation({
     const nativeHide = window.hide?.bind(window);
     const nativeFocus = window.focus?.bind(window);
     const nativeSetSkipTaskbar = window.setSkipTaskbar?.bind(window);
-    try {
-      window.webContents?.setBackgroundThrottling?.(true);
-      nativeSetSkipTaskbar?.(true);
-      setWindowMuted(window, true);
-    } catch {
-      // The regular browser-window-created guard remains as a fallback.
-    }
+    const nativeSetOpacity = window.setOpacity?.bind(window);
 
     const canShow = () => shouldShowWindow() === true;
     const prepareToShow = () => {
       nativeSetSkipTaskbar?.(false);
       setWindowMuted(window, false);
+      nativeSetOpacity?.(1);
     };
     const keepHidden = () => {
+      nativeSetOpacity?.(0);
+      nativeHide?.();
       nativeSetSkipTaskbar?.(true);
       setWindowMuted(window, true);
     };
@@ -116,6 +113,17 @@ function installOfficialShellIsolation({
         // Some Electron builds expose non-configurable native methods.
       }
     };
+
+    try {
+      window.webContents?.setBackgroundThrottling?.(true);
+      if (canShow()) {
+        prepareToShow();
+      } else {
+        keepHidden();
+      }
+    } catch {
+      // The regular browser-window-created guard remains as a fallback.
+    }
 
     if (nativeShow) {
       defineGuard('show', () => {
@@ -144,10 +152,13 @@ function installOfficialShellIsolation({
       defineGuard('setSkipTaskbar', (skip) =>
         nativeSetSkipTaskbar(canShow() ? Boolean(skip) : true));
     }
+    if (nativeSetOpacity) {
+      defineGuard('setOpacity', (opacity) => nativeSetOpacity(canShow() ? opacity : 0));
+    }
     if (nativeHide) {
       defineGuard('hide', () => {
         keepHidden();
-        return nativeHide();
+        return undefined;
       });
     }
     if (forwardReadyToShow && typeof window.once === 'function' &&
