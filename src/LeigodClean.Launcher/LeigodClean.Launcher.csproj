@@ -5,7 +5,7 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <AssemblyName>LeigodClean</AssemblyName>
     <RootNamespace>LeigodClean</RootNamespace>
-    <Version>0.4.0</Version>
+    <Version>0.4.1</Version>
     <Authors>bunwright</Authors>
     <Product>LeigodClean</Product>
     <Description>Focused desktop interface and process-aware automation for Leigod on Windows.</Description>

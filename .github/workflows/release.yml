@@ -26,6 +26,10 @@ jobs:
         with:
           node-version: 22
 
+      - name: Prepare release notes
+        shell: pwsh
+        run: node scripts/extract-release-notes.cjs $env:GITHUB_REF_NAME artifacts/release-notes.md
+
       - name: Restore
         run: dotnet restore LeigodClean.slnx
 
@@ -68,7 +72,7 @@ jobs:
         run: |
           gh release create $env:GITHUB_REF_NAME `
             --verify-tag `
-            --generate-notes `
-            --title $env:GITHUB_REF_NAME `
+            --notes-file artifacts/release-notes.md `
+            --title "LeigodClean $env:GITHUB_REF_NAME" `
             artifacts/win-x64/LeigodClean.exe `
             artifacts/win-x64/LeigodClean.exe.sha256

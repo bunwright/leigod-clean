@@ -1799,8 +1799,10 @@ module.exports = function startLeigodClean(officialRequire) {
     }
     const recentGameIds = [];
     const recentSeen = new Set();
-    for (const value of Array.isArray(value?.recentGameIds) ? value.recentGameIds.slice(0, 100) : []) {
-      const gameId = String(value ?? '');
+    for (const recentGameId of Array.isArray(value?.recentGameIds)
+      ? value.recentGameIds.slice(0, 100)
+      : []) {
+      const gameId = String(recentGameId ?? '');
       if (/^\d{1,12}$/u.test(gameId) && Number(gameId) > 0 && !recentSeen.has(gameId)) {
         recentSeen.add(gameId);
         recentGameIds.push(gameId);
