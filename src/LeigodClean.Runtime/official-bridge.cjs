@@ -66,12 +66,12 @@ function rankGames(games, priorities = {}) {
 }
 
 function installOfficialBridge(rankCatalog) {
-  if (window.__leigodCleanOfficial?.version === 4) {
+  if (window.__leigodCleanOfficial?.version === 5) {
     return true;
   }
 
   const runtime = {
-    version: 4,
+    version: 5,
     games: null,
     gameById: new Map(),
     recentGameIds: [],
@@ -80,6 +80,15 @@ function installOfficialBridge(rankCatalog) {
     prioritiesLoadedAt: 0,
     lineByKey: new Map(),
     databaseName: '',
+    stateRevision: 0,
+    stateWaiters: new Map(),
+    stateSubscriptionsInitialized: false,
+    stateSubscriptionCount: 0,
+    statePublishQueued: false,
+    statePublishing: false,
+    statePublishAgain: false,
+    lastStateSignature: '',
+    nextStateWaiterId: 0,
   };
 
   const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -697,6 +706,107 @@ function installOfficialBridge(rankCatalog) {
     };
   }
 
+  async function ensureStateSubscriptions() {
+    if (runtime.stateSubscriptionsInitialized) {
+      return;
+    }
+    const pinia = await requirePinia();
+    runtime.stateSubscriptionsInitialized = true;
+    for (const name of ['user', 'acc']) {
+      const store = pinia._s.get(name);
+      if (typeof store?.$subscribe !== 'function') {
+        continue;
+      }
+      store.$subscribe(() => scheduleStatePublish(), { detached: true });
+      runtime.stateSubscriptionCount += 1;
+    }
+    await publishState();
+  }
+
+  function scheduleStatePublish() {
+    if (runtime.statePublishQueued) {
+      return;
+    }
+    runtime.statePublishQueued = true;
+    queueMicrotask(() => {
+      runtime.statePublishQueued = false;
+      void publishState().catch(() => {});
+    });
+  }
+
+  async function publishState() {
+    if (runtime.statePublishing) {
+      runtime.statePublishAgain = true;
+      return;
+    }
+    runtime.statePublishing = true;
+    try {
+      const snapshot = await state();
+      const signature = eventStateSignature(snapshot);
+      if (signature === runtime.lastStateSignature) {
+        return;
+      }
+      runtime.lastStateSignature = signature;
+      runtime.stateRevision += 1;
+      for (const [waiterId, waiter] of runtime.stateWaiters) {
+        runtime.stateWaiters.delete(waiterId);
+        clearTimeout(waiter.timer);
+        waiter.resolve({
+          revision: runtime.stateRevision,
+          state: snapshot,
+          subscribed: runtime.stateSubscriptionCount > 0,
+          heartbeat: false,
+        });
+      }
+    } finally {
+      runtime.statePublishing = false;
+      if (runtime.statePublishAgain) {
+        runtime.statePublishAgain = false;
+        scheduleStatePublish();
+      }
+    }
+  }
+
+  function eventStateSignature(snapshot) {
+    const { duration: _duration, totalTimeLeft, ...eventState } = snapshot;
+    return JSON.stringify({
+      ...eventState,
+      totalTimeLeftMinutes: Math.floor(Math.max(0, toNumber(totalTimeLeft, 0)) / 60),
+    });
+  }
+
+  async function watchState(payload = {}) {
+    await ensureStateSubscriptions();
+    const afterRevision = Math.max(0, toNumber(payload.afterRevision, 0));
+    if (runtime.stateRevision > afterRevision) {
+      return {
+        revision: runtime.stateRevision,
+        state: await state(),
+        subscribed: runtime.stateSubscriptionCount > 0,
+        heartbeat: false,
+      };
+    }
+
+    const timeoutMs = Math.min(120000, Math.max(10000, toNumber(payload.timeoutMs, 60000)));
+    return new Promise((resolve, reject) => {
+      const waiterId = ++runtime.nextStateWaiterId;
+      const timer = setTimeout(async () => {
+        runtime.stateWaiters.delete(waiterId);
+        try {
+          resolve({
+            revision: runtime.stateRevision,
+            state: await state(),
+            subscribed: runtime.stateSubscriptionCount > 0,
+            heartbeat: true,
+          });
+        } catch (error) {
+          reject(error);
+        }
+      }, timeoutMs);
+      runtime.stateWaiters.set(waiterId, { resolve, timer });
+    });
+  }
+
   async function diagnostics() {
     const pinia = await requirePinia();
     const databases = await databaseCandidates().catch(() => []);
@@ -708,6 +818,7 @@ function installOfficialBridge(rankCatalog) {
       recentGames: runtime.recentGameIds.length,
       localGames: runtime.localGameIds.length,
       hasSimplifyApi: typeof window.leigodSimplify?.invoke === 'function',
+      stateSubscriptions: runtime.stateSubscriptionCount,
     };
   }
 
@@ -723,6 +834,7 @@ function installOfficialBridge(rankCatalog) {
     start,
     state,
     stop,
+    watchState,
   };
   window.__leigodCleanOfficial = Object.freeze({
     version: runtime.version,

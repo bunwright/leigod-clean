@@ -10,6 +10,7 @@ internal static class RuntimeInstaller
         "main.cjs",
         "auto-acceleration.cjs",
         "monitor.cjs",
+        "process-events.cjs",
         "official-bridge.cjs",
         "preload.cjs",
         "community-processes.json",

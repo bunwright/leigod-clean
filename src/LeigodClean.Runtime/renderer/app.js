@@ -16,6 +16,9 @@ const model = {
   stopping: false,
   timeChanging: false,
   toastTimer: null,
+  monitorClockTimer: null,
+  durationClockTimer: null,
+  durationClock: { gameId: '', source: 0, base: 0, anchoredAt: 0 },
 };
 
 const elements = Object.fromEntries([...document.querySelectorAll('[id]')].map((element) => [element.id, element]));
@@ -85,6 +88,7 @@ function applyState(next) {
     return;
   }
   const previousClient = model.state?.client ?? {};
+  synchronizeDurationClock(previousClient, next.client ?? {});
   model.state = next;
   model.settings = next.settings ?? model.settings;
   const client = next.client ?? {};
@@ -539,10 +543,11 @@ function renderSession() {
     ? '加速中'
     : acceleration.loading ? '正在启动' : '未加速';
   if (acceleration.selectedIsActive) {
-    elements.durationMetric.textContent = formatClock(Number(client.duration) || 0);
+    renderDurationMetric(acceleration);
     elements.delayMetric.textContent = Number(client.delay) > 0 ? `${client.delay} ms` : '—';
     elements.lossMetric.textContent = Number(client.loss) > 0 ? `${client.loss}%` : '0%';
   } else {
+    clearDurationClockTimer();
     elements.durationMetric.textContent = '—';
     elements.delayMetric.textContent = '—';
     elements.lossMetric.textContent = '—';
@@ -553,12 +558,86 @@ function renderSession() {
   elements.monitorDescription.textContent = monitorView.description;
   elements.monitorTitle.textContent = monitorView.title;
   elements.monitorDetail.textContent = monitorView.detail;
+  scheduleMonitorClock(visibleMonitor);
   updateStartAvailability();
 }
 
+function synchronizeDurationClock(previousClient, client) {
+  const acceleration = viewState.accelerationContext(client);
+  const gameId = acceleration.activeGameId ? String(acceleration.activeGameId) : '';
+  const source = Math.max(0, Number(client.duration) || 0);
+  const previousAcceleration = viewState.accelerationContext(previousClient);
+  const sessionChanged = gameId !== model.durationClock.gameId ||
+    acceleration.status !== previousAcceleration.status;
+  if (!gameId) {
+    model.durationClock = { gameId: '', source: 0, base: 0, anchoredAt: 0 };
+    clearDurationClockTimer();
+    return;
+  }
+  if (sessionChanged || source !== model.durationClock.source) {
+    model.durationClock = {
+      gameId,
+      source,
+      base: source,
+      anchoredAt: Date.now(),
+    };
+  }
+}
+
+function currentDuration(acceleration) {
+  const source = Math.max(0, Number(model.state?.client?.duration) || 0);
+  if (!acceleration?.accelerating ||
+    String(acceleration.activeGameId || '') !== model.durationClock.gameId ||
+    model.durationClock.anchoredAt <= 0) {
+    return source;
+  }
+  return model.durationClock.base + Math.floor(
+    Math.max(0, Date.now() - model.durationClock.anchoredAt) / 1000,
+  );
+}
+
+function renderDurationMetric(acceleration) {
+  elements.durationMetric.textContent = formatClock(currentDuration(acceleration));
+  clearDurationClockTimer();
+  if (!acceleration?.accelerating || document.hidden ||
+    elements.settingsDialog.open || elements.aboutDialog.open) {
+    return;
+  }
+  const elapsed = Math.max(0, Date.now() - model.durationClock.anchoredAt);
+  const delay = Math.max(100, 1000 - (elapsed % 1000));
+  model.durationClockTimer = setTimeout(() => {
+    model.durationClockTimer = null;
+    const current = viewState.accelerationContext(
+      model.state?.client ?? {},
+      model.selectedGame?.id,
+    );
+    if (current.selectedIsActive) {
+      renderDurationMetric(current);
+    }
+  }, delay);
+}
+
+function clearDurationClockTimer() {
+  if (model.durationClockTimer) {
+    clearTimeout(model.durationClockTimer);
+    model.durationClockTimer = null;
+  }
+}
+
 function monitorPresentation(monitor) {
-  const remaining = formatCountdown(Number(monitor.remainingMs) || 0);
+  const remainingMs = Number(monitor.deadline) > 0
+    ? Math.max(0, Number(monitor.deadline) - Date.now())
+    : Number(monitor.remainingMs) || 0;
+  const remaining = formatCountdown(remainingMs);
   const process = monitor.activeProcess || '';
+  if (monitor.reason === 'process-observer-unavailable') {
+    return {
+      chip: '监控恢复中',
+      title: '进程监控暂时不可用',
+      detail: monitor.error || '恢复后将从当前进程状态继续。',
+      description: '正在恢复进程监控',
+    };
+  }
   switch (monitor.state) {
     case 'waiting':
       return { chip: `等待 ${remaining}`, title: '等待游戏启动', detail: '检测到任一目标进程后自动进入监控。', description: '等待游戏进程' };
@@ -583,6 +662,28 @@ function monitorPresentation(monitor) {
         return { chip: '已关闭', title: '自动暂停已关闭', detail: '可在偏好设置中重新开启。', description: '仅保留手动控制' };
       }
       return { chip: '空闲', title: '自动暂停待命', detail: '开始加速后将自动检测游戏进程。', description: '等待开始加速' };
+  }
+}
+
+function scheduleMonitorClock(monitor) {
+  clearMonitorClockTimer();
+  if (!['waiting', 'grace'].includes(monitor?.state) || Number(monitor?.deadline) <= Date.now() ||
+    document.hidden || elements.settingsDialog.open || elements.aboutDialog.open) {
+    return;
+  }
+  const remaining = Number(monitor.deadline) - Date.now();
+  model.monitorClockTimer = setTimeout(() => {
+    model.monitorClockTimer = null;
+    if (model.selectedGame) {
+      renderSession();
+    }
+  }, Math.min(1000, Math.max(100, remaining)));
+}
+
+function clearMonitorClockTimer() {
+  if (model.monitorClockTimer) {
+    clearTimeout(model.monitorClockTimer);
+    model.monitorClockTimer = null;
   }
 }
 
@@ -912,6 +1013,12 @@ async function showOfficial() {
 function syncModalPresentation() {
   const open = elements.settingsDialog.open || elements.aboutDialog.open;
   document.body.classList.toggle('modal-open', open);
+  if (open) {
+    clearDurationClockTimer();
+    clearMonitorClockTimer();
+  } else if (model.selectedGame) {
+    renderSession();
+  }
   void api.setModalOpen(open).then(unwrap).catch(() => {});
 }
 
@@ -1129,6 +1236,14 @@ elements.settingsOfficialButton.addEventListener('click', async () => {
   await showOfficial();
 });
 elements.settingsForm.addEventListener('submit', saveSettings);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    clearDurationClockTimer();
+    clearMonitorClockTimer();
+  } else if (model.selectedGame) {
+    renderSession();
+  }
+});
 elements.openLogsButton.addEventListener('click', async () => {
   try {
     unwrap(await api.openLogs());

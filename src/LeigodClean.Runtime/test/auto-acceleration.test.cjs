@@ -27,14 +27,11 @@ test('starts once when an enabled game process appears', () => {
   assert.equal(second.state.latched, true);
 });
 
-test('requires two missing samples before a process can trigger again', () => {
+test('an exit event immediately rearms the next process start', () => {
   const latched = completeAutoWatchAttempt({}, true, 0);
-  const firstMiss = evaluateAutoWatchState(latched, { ...idleContext, running: false }, 1000);
-  assert.equal(firstMiss.state.latched, true);
-
-  const secondMiss = evaluateAutoWatchState(firstMiss.state, { ...idleContext, running: false }, 2000);
-  assert.equal(secondMiss.state.latched, false);
-  assert.equal(evaluateAutoWatchState(secondMiss.state, idleContext, 3000).shouldStart, true);
+  const exited = evaluateAutoWatchState(latched, { ...idleContext, running: false }, 1000);
+  assert.equal(exited.state.latched, false);
+  assert.equal(evaluateAutoWatchState(exited.state, idleContext, 2000).shouldStart, true);
 });
 
 test('backs off after failure and retries while the process remains running', () => {

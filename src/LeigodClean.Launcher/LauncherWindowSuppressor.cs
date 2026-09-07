@@ -15,7 +15,11 @@ internal static partial class LauncherWindowSuppressor
     private const uint QueueAllInput = 0x04FF;
     private const uint WinEventOutOfContext = 0x0000;
     private const uint WinEventSkipOwnProcess = 0x0002;
-    private const uint WaitSliceMilliseconds = 8;
+    private const uint FallbackWaitMilliseconds = 250;
+    private const uint MessageWaitInputAvailable = 0x0004;
+    private const uint WaitFailed = 0xFFFFFFFF;
+    private const uint WaitObject0 = 0x00000000;
+    private const uint WaitTimeout = 0x00000102;
 
     private static readonly ConcurrentDictionary<uint, SuppressionContext> Contexts = new();
 
@@ -44,30 +48,56 @@ internal static partial class LauncherWindowSuppressor
             0,
             WinEventOutOfContext | WinEventSkipOwnProcess);
 
-        if (showHook == IntPtr.Zero || foregroundHook == IntPtr.Zero)
+        bool hooksAvailable = showHook != IntPtr.Zero && foregroundHook != IntPtr.Zero;
+        if (!hooksAvailable)
         {
-            AppLog.Information("Could not install every launcher window event hook; polling remains active");
+            AppLog.Information("Could not install every launcher window event hook; low-frequency fallback remains active");
         }
 
         try
         {
+            context.RecordIfHidden(HideTopLevelWindows(process.Id));
+            IntPtr* handles = stackalloc IntPtr[1];
+            handles[0] = process.Handle;
             while (context.Stopwatch.Elapsed < timeout)
             {
-                context.RecordIfHidden(HideTopLevelWindows(process.Id));
-                PumpWindowEvents();
-                context.RecordIfHidden(HideTopLevelWindows(process.Id));
+                TimeSpan remaining = timeout - context.Stopwatch.Elapsed;
+                uint remainingMilliseconds = checked((uint)Math.Max(1, Math.Ceiling(remaining.TotalMilliseconds)));
+                uint waitMilliseconds = hooksAvailable
+                    ? remainingMilliseconds
+                    : Math.Min(FallbackWaitMilliseconds, remainingMilliseconds);
+                uint result = MsgWaitForMultipleObjectsEx(
+                    1,
+                    handles,
+                    waitMilliseconds,
+                    QueueAllInput,
+                    MessageWaitInputAvailable);
 
-                if (process.WaitForExit(0))
+                if (result == WaitObject0)
                 {
                     return;
                 }
+                if (result == WaitObject0 + 1)
+                {
+                    PumpWindowEvents();
+                    context.RecordIfHidden(HideTopLevelWindows(process.Id));
+                    continue;
+                }
+                if (result == WaitTimeout)
+                {
+                    if (!hooksAvailable)
+                    {
+                        context.RecordIfHidden(HideTopLevelWindows(process.Id));
+                    }
+                    continue;
+                }
+                if (result == WaitFailed)
+                {
+                    throw new InvalidOperationException(
+                        $"等待官方启动器窗口事件失败，Windows 错误 {Marshal.GetLastPInvokeError()}。");
+                }
 
-                _ = MsgWaitForMultipleObjectsEx(
-                    0,
-                    IntPtr.Zero,
-                    WaitSliceMilliseconds,
-                    QueueAllInput,
-                    0);
+                throw new InvalidOperationException($"等待官方启动器窗口事件返回了未知结果 {result}。");
             }
 
             AppLog.Information("Official launcher window suppression timed out; launcher continues in background");
@@ -243,10 +273,10 @@ internal static partial class LauncherWindowSuppressor
     [LibraryImport("user32.dll", EntryPoint = "DispatchMessageW")]
     private static partial IntPtr DispatchMessage(in WindowMessage message);
 
-    [LibraryImport("user32.dll")]
-    private static partial uint MsgWaitForMultipleObjectsEx(
+    [LibraryImport("user32.dll", SetLastError = true)]
+    private static unsafe partial uint MsgWaitForMultipleObjectsEx(
         uint count,
-        IntPtr handles,
+        IntPtr* handles,
         uint milliseconds,
         uint wakeMask,
         uint flags);

@@ -62,10 +62,8 @@ class ProcessMonitor {
     pause,
     onState = () => {},
     now = () => Date.now(),
-    setIntervalFn = setInterval,
-    clearIntervalFn = clearInterval,
-    pollIntervalMs = 1000,
-    missThreshold = 2,
+    setTimeoutFn = setTimeout,
+    clearTimeoutFn = clearTimeout,
     pauseRetryMs = 30000,
   }) {
     if (typeof isRunning !== 'function' || typeof pause !== 'function') {
@@ -76,25 +74,37 @@ class ProcessMonitor {
     this._pause = pause;
     this._onState = onState;
     this._now = now;
-    this._setInterval = setIntervalFn;
-    this._clearInterval = clearIntervalFn;
-    this._pollIntervalMs = Math.max(250, Number(pollIntervalMs) || 1000);
-    this._missThreshold = Math.max(1, Number(missThreshold) || 2);
+    this._setTimeout = setTimeoutFn;
+    this._clearTimeout = clearTimeoutFn;
     this._pauseRetryMs = Math.min(5 * 60 * 1000, Math.max(1000, Number(pauseRetryMs) || 30000));
 
     this._generation = 0;
     this._timer = null;
+    this._timerDeadline = 0;
     this._checking = false;
+    this._pendingCheck = false;
+    this._checkPromise = null;
+    this._observerAvailable = true;
+    this._suspendedRemainingMs = 0;
+    this._reasonBeforeUnavailable = '';
     this._snapshot = this._emptySnapshot();
   }
 
   get snapshot() {
-    return { ...this._snapshot, processes: [...this._snapshot.processes] };
+    const result = { ...this._snapshot, processes: [...this._snapshot.processes] };
+    if (result.deadline > 0 && this._observerAvailable &&
+      [STATES.WAITING, STATES.GRACE].includes(result.state)) {
+      result.remainingMs = Math.max(0, result.deadline - this._now());
+    }
+    if (result.startedAt > 0) {
+      result.elapsedMs = Math.max(0, this._now() - result.startedAt);
+    }
+    return result;
   }
 
   async start(processes, options = {}) {
     const normalized = normalizeProcesses(processes);
-    this._resetTimer();
+    this._clearDeadline();
     const generation = ++this._generation;
     const now = this._now();
 
@@ -127,33 +137,122 @@ class ProcessMonitor {
       checkedAt: now,
       graceMs,
       startupTimeoutMs,
-      misses: 0,
+      observerReady: this._observerAvailable,
       error: '',
     };
+    if (!this._observerAvailable) {
+      this._reasonBeforeUnavailable = this._snapshot.reason;
+      this._suspendedRemainingMs = startupTimeoutMs;
+      this._snapshot.reason = 'process-observer-unavailable';
+    }
     this._emit();
 
-    await this._tick(generation);
-    this._ensureTimer(generation);
+    if (this._observerAvailable) {
+      await this.checkNow();
+      this._scheduleDeadline(generation);
+    }
 
     return this.snapshot;
   }
 
   stop(reason = 'stopped') {
-    this._resetTimer();
+    this._clearDeadline();
     this._generation += 1;
-    this._checking = false;
+    this._pendingCheck = false;
+    this._suspendedRemainingMs = 0;
+    this._reasonBeforeUnavailable = '';
     this._snapshot = {
       ...this._emptySnapshot(),
       state: STATES.IDLE,
       reason,
       checkedAt: this._now(),
+      observerReady: this._observerAvailable,
     };
     this._emit();
     return this.snapshot;
   }
 
   async checkNow() {
-    await this._tick(this._generation);
+    if (this._checking) {
+      this._pendingCheck = true;
+      await this._checkPromise;
+      return this.snapshot;
+    }
+
+    const generation = this._generation;
+    this._checking = true;
+    this._checkPromise = (async () => {
+      do {
+        this._pendingCheck = false;
+        await this._evaluate(generation);
+      } while (this._pendingCheck && generation === this._generation);
+    })();
+    try {
+      await this._checkPromise;
+    } finally {
+      this._checking = false;
+      this._checkPromise = null;
+    }
+    return this.snapshot;
+  }
+
+  async processesChanged(changedNames = [], fullSnapshot = false) {
+    if (!fullSnapshot) {
+      const targets = new Set(this._snapshot.processes.map(processKey));
+      const relevant = normalizeProcesses(changedNames).some((name) => targets.has(processKey(name)));
+      if (!relevant) {
+        return this.snapshot;
+      }
+    }
+    return this.checkNow();
+  }
+
+  observerUnavailable(error) {
+    const message = error instanceof Error ? error.message : String(error ?? '进程事件服务不可用。');
+    if (!this._observerAvailable && this._snapshot.reason === 'process-observer-unavailable') {
+      if (message !== this._snapshot.error) {
+        this._snapshot.error = message;
+        this._snapshot.checkedAt = this._now();
+        this._emit();
+      }
+      return this.snapshot;
+    }
+    this._observerAvailable = false;
+    if (this._snapshot.deadline > 0) {
+      this._suspendedRemainingMs = Math.max(100, this._snapshot.deadline - this._now());
+      this._snapshot.remainingMs = this._suspendedRemainingMs;
+    }
+    this._clearDeadline();
+    if (this._isRunningState()) {
+      this._reasonBeforeUnavailable = this._snapshot.reason;
+      this._snapshot.reason = 'process-observer-unavailable';
+    }
+    this._snapshot.observerReady = false;
+    this._snapshot.error = message;
+    this._snapshot.checkedAt = this._now();
+    this._emit();
+    return this.snapshot;
+  }
+
+  async observerAvailable() {
+    const recovered = !this._observerAvailable;
+    this._observerAvailable = true;
+    this._snapshot.observerReady = true;
+    this._snapshot.error = '';
+    if (recovered && this._isRunningState()) {
+      const now = this._now();
+      if (this._suspendedRemainingMs > 0 &&
+        [STATES.WAITING, STATES.GRACE].includes(this._snapshot.state)) {
+        this._snapshot.deadline = now + this._suspendedRemainingMs;
+        this._snapshot.remainingMs = this._suspendedRemainingMs;
+      }
+      this._snapshot.reason = this._reasonBeforeUnavailable || this._snapshot.reason;
+      this._snapshot.checkedAt = now;
+      this._suspendedRemainingMs = 0;
+      this._reasonBeforeUnavailable = '';
+      this._emit();
+      await this.checkNow();
+    }
     return this.snapshot;
   }
 
@@ -172,7 +271,7 @@ class ProcessMonitor {
       checkedAt: 0,
       graceMs: 0,
       startupTimeoutMs: 0,
-      misses: 0,
+      observerReady: this._observerAvailable,
       error: '',
     };
   }
@@ -181,27 +280,42 @@ class ProcessMonitor {
     return [STATES.WAITING, STATES.ACTIVE, STATES.GRACE].includes(this._snapshot.state);
   }
 
-  _resetTimer() {
+  _clearDeadline() {
     if (this._timer) {
-      this._clearInterval(this._timer);
+      this._clearTimeout(this._timer);
       this._timer = null;
     }
+    this._timerDeadline = 0;
   }
 
-  _ensureTimer(generation) {
-    if (generation === this._generation && !this._timer && this._isRunningState()) {
-      this._timer = this._setInterval(() => {
-        void this._tick(generation);
-      }, this._pollIntervalMs);
+  _scheduleDeadline(generation) {
+    if (generation !== this._generation || !this._observerAvailable ||
+      ![STATES.WAITING, STATES.GRACE].includes(this._snapshot.state) ||
+      this._snapshot.deadline <= 0) {
+      return;
     }
+    if (this._timer && this._timerDeadline === this._snapshot.deadline) {
+      return;
+    }
+    this._clearDeadline();
+    const deadline = this._snapshot.deadline;
+    const delay = Math.max(0, deadline - this._now());
+    this._timerDeadline = deadline;
+    this._timer = this._setTimeout(() => {
+      this._timer = null;
+      this._timerDeadline = 0;
+      if (generation === this._generation && deadline === this._snapshot.deadline) {
+        void this.checkNow();
+      }
+    }, delay);
+    this._timer?.unref?.();
   }
 
-  async _tick(generation) {
-    if (generation !== this._generation || this._checking || !this._isRunningState()) {
+  async _evaluate(generation) {
+    if (generation !== this._generation || !this._observerAvailable || !this._isRunningState()) {
       return;
     }
 
-    this._checking = true;
     try {
       const match = await this._findRunningProcess();
       if (generation !== this._generation) {
@@ -218,8 +332,8 @@ class ProcessMonitor {
         this._snapshot.activeProcess = match;
         this._snapshot.deadline = 0;
         this._snapshot.remainingMs = 0;
-        this._snapshot.misses = 0;
         this._snapshot.reason = 'process-running';
+        this._clearDeadline();
         this._emit();
         return;
       }
@@ -227,27 +341,26 @@ class ProcessMonitor {
       this._snapshot.activeProcess = '';
       if (this._snapshot.state === STATES.WAITING) {
         this._snapshot.remainingMs = Math.max(0, this._snapshot.deadline - now);
-        this._emit();
         if (now >= this._snapshot.deadline) {
           await this._pauseOnce(generation, 'startup-timeout');
+        } else {
+          this._emit();
+          this._scheduleDeadline(generation);
         }
         return;
       }
 
       if (this._snapshot.state === STATES.ACTIVE) {
-        this._snapshot.misses += 1;
-        if (this._snapshot.misses >= this._missThreshold) {
-          this._snapshot.state = STATES.GRACE;
-          this._snapshot.reason = 'process-handoff';
-          this._snapshot.deadline = now + this._snapshot.graceMs;
-          this._snapshot.remainingMs = this._snapshot.graceMs;
-        }
+        this._snapshot.state = STATES.GRACE;
+        this._snapshot.reason = 'process-handoff';
+        this._snapshot.deadline = now + this._snapshot.graceMs;
+        this._snapshot.remainingMs = this._snapshot.graceMs;
         this._emit();
+        this._scheduleDeadline(generation);
         return;
       }
 
       this._snapshot.remainingMs = Math.max(0, this._snapshot.deadline - now);
-      this._emit();
       if (now >= this._snapshot.deadline) {
         const finalMatch = await this._findRunningProcess();
         if (generation !== this._generation) {
@@ -259,21 +372,20 @@ class ProcessMonitor {
           this._snapshot.activeProcess = finalMatch;
           this._snapshot.deadline = 0;
           this._snapshot.remainingMs = 0;
-          this._snapshot.misses = 0;
           this._snapshot.reason = 'process-running';
+          this._clearDeadline();
           this._emit();
         } else {
           await this._pauseOnce(generation, 'processes-exited');
         }
+      } else {
+        this._emit();
+        this._scheduleDeadline(generation);
       }
     } catch (error) {
       if (generation === this._generation) {
-        this._snapshot.error = error instanceof Error ? error.message : String(error);
-        this._snapshot.checkedAt = this._now();
-        this._emit();
+        this.observerUnavailable(error);
       }
-    } finally {
-      this._checking = false;
     }
   }
 
@@ -303,7 +415,7 @@ class ProcessMonitor {
       return;
     }
 
-    this._resetTimer();
+    this._clearDeadline();
     this._snapshot.state = STATES.PAUSING;
     this._snapshot.reason = reason;
     this._snapshot.remainingMs = 0;
@@ -327,7 +439,7 @@ class ProcessMonitor {
         this._snapshot.remainingMs = this._pauseRetryMs;
         this._snapshot.checkedAt = now;
         this._emit();
-        this._ensureTimer(generation);
+        this._scheduleDeadline(generation);
       }
     }
   }
@@ -335,6 +447,11 @@ class ProcessMonitor {
   _emit() {
     this._onState(this.snapshot);
   }
+}
+
+function processKey(value) {
+  const name = String(value ?? '').toLocaleLowerCase('en-US');
+  return name && !name.endsWith('.exe') ? `${name}.exe` : name;
 }
 
 function clampDuration(value, fallback) {

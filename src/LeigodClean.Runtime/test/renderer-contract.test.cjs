@@ -12,6 +12,7 @@ const viewStateScript = fs.readFileSync(path.join(rendererRoot, 'view-state.js')
 const styles = fs.readFileSync(path.join(rendererRoot, 'styles.css'), 'utf8');
 const mainRuntime = fs.readFileSync(path.join(rendererRoot, '..', 'main.cjs'), 'utf8');
 const preload = fs.readFileSync(path.join(rendererRoot, '..', 'preload.cjs'), 'utf8');
+const processEvents = fs.readFileSync(path.join(rendererRoot, '..', 'process-events.cjs'), 'utf8');
 const product = JSON.parse(fs.readFileSync(path.join(rendererRoot, '..', 'product.json'), 'utf8'));
 const project = fs.readFileSync(
   path.join(rendererRoot, '..', '..', 'LeigodClean.Launcher', 'LeigodClean.Launcher.csproj'),
@@ -107,7 +108,16 @@ test('modal dialogs dim native controls without mutating Windows button capabili
   assert.doesNotMatch(mainRuntime, /setClosable\(/u);
   assert.match(mainRuntime, /modalTitleBarOverlay/u);
   assert.match(script, /addEventListener\('close', syncModalPresentation\)/u);
-  assert.match(styles, /backdrop-filter:\s*blur\(7px\) saturate\(\.82\)/u);
+  assert.doesNotMatch(styles, /backdrop-filter/u);
+});
+
+test('process automation is event-driven and independent of the official native polling addon', () => {
+  assert.doesNotMatch(mainRuntime, /setInterval\s*\(/u);
+  assert.doesNotMatch(mainRuntime, /win32Addon|isProcessRunning/u);
+  assert.match(mainRuntime, /processEvents\.subscribe\(handleProcessEvent\)/u);
+  assert.match(mainRuntime, /bridge\.call\('watchState'/u);
+  assert.match(processEvents, /--process-events/u);
+  assert.match(project, /process-events\.cjs/u);
 });
 
 test('global and per-game automatic acceleration rules are independent', () => {

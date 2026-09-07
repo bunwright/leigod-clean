@@ -79,6 +79,7 @@ test('manual acceleration and account-time controls use independent official act
       .map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]),
   );
   const events = [];
+  const stateSubscribers = [];
   const originalDateNow = Date.now;
   let now = 1_000;
   const user = {
@@ -88,6 +89,10 @@ test('manual acceleration and account-time controls use independent official act
     async toggleTimeStatus(status, options) {
       events.push(`time:${status}:${options.scene}`);
       this.userTimeInfo.timeStatus = status;
+    },
+    $subscribe(callback) {
+      stateSubscribers.push(callback);
+      return () => {};
     },
   };
   const acc = {
@@ -103,6 +108,10 @@ test('manual acceleration and account-time controls use independent official act
       events.push('stop-acceleration');
       this.accInfo.accStatus = 'normal';
       this.accInfo.game_id = 0;
+    },
+    $subscribe(callback) {
+      stateSubscribers.push(callback);
+      return () => {};
     },
   };
   const pinia = { _s: new Map([['user', user], ['acc', acc]]) };
@@ -174,6 +183,40 @@ test('manual acceleration and account-time controls use independent official act
     };
 
     assert.equal(installOfficialBridge(rankGames), true);
+    const initialStateEvent = await window.__leigodCleanOfficial.call('watchState', {
+      afterRevision: 0,
+      timeoutMs: 10000,
+    });
+    assert.equal(initialStateEvent.revision, 1);
+    assert.equal(initialStateEvent.subscribed, true);
+    const nextStateEvent = window.__leigodCleanOfficial.call('watchState', {
+      afterRevision: initialStateEvent.revision,
+      timeoutMs: 10000,
+    });
+    acc.accInfo = { accStatus: 'speeding', game_id: 42 };
+    stateSubscribers.at(-1)();
+    const acceleratedStateEvent = await nextStateEvent;
+    assert.equal(acceleratedStateEvent.state.gameId, 42);
+
+    let durationOnlyResolved = false;
+    const afterDuration = window.__leigodCleanOfficial.call('watchState', {
+      afterRevision: acceleratedStateEvent.revision,
+      timeoutMs: 10000,
+    }).then((value) => {
+      durationOnlyResolved = true;
+      return value;
+    });
+    acc.accInfo.duration = 1;
+    stateSubscribers.at(-1)();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(durationOnlyResolved, false, 'duration-only ticks do not wake the main process');
+    acc.accInfo.delay = 25;
+    stateSubscribers.at(-1)();
+    const metricStateEvent = await afterDuration;
+    assert.equal(metricStateEvent.state.duration, 1);
+    assert.equal(metricStateEvent.state.delay, 25);
+
+    acc.accInfo = { accStatus: 'normal', game_id: 0 };
     assert.deepEqual(
       await window.__leigodCleanOfficial.call('autoCandidates'),
       [1, 42],

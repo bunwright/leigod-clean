@@ -21,6 +21,7 @@ public sealed class OfficialClientLauncherTests
             string runtimeRoot = RuntimeInstaller.RuntimeRoot(installRoot);
             string mainPath = Path.Combine(runtimeRoot, "main.cjs");
             Assert.True(File.Exists(mainPath));
+            Assert.True(File.Exists(Path.Combine(runtimeRoot, "process-events.cjs")));
             Assert.Equal(Environment.ProcessPath, File.ReadAllText(Path.Combine(runtimeRoot, "launcher.path")));
 
             File.WriteAllText(mainPath, "modified");

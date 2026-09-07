@@ -7,11 +7,20 @@ namespace LeigodClean;
 internal static class Program
 {
     private const string ElevatedLaunchArgument = "--elevated-launch";
+    private const string ProcessEventsArgument = "--process-events";
     private const string RestoreArgument = "--restore";
 
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 1 && string.Equals(
+            args[0],
+            ProcessEventsArgument,
+            StringComparison.OrdinalIgnoreCase))
+        {
+            return ProcessEventHost.Run();
+        }
+
         AppLog.Initialize();
 
         try

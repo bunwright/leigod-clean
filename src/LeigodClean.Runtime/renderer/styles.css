@@ -1429,11 +1429,11 @@ svg {
   border: 1px solid rgba(0, 0, 0, .1);
   border-radius: 18px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, .24);
+  contain: layout style;
 }
 
 .settings-dialog::backdrop {
-  background: rgba(20, 20, 22, .3);
-  backdrop-filter: blur(7px) saturate(.82);
+  background: rgba(20, 20, 22, .38);
 }
 
 .settings-dialog form {

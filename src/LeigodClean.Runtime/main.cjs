@@ -29,6 +29,7 @@ module.exports = function startLeigodClean(officialRequire) {
     resolveAutoGameIds,
   } = require('./auto-acceleration.cjs');
   const { OfficialBridge } = require('./official-bridge.cjs');
+  const { normalizeProcessName, ProcessEventSource } = require('./process-events.cjs');
   const {
     ProcessMonitor,
     STATES,
@@ -85,18 +86,25 @@ module.exports = function startLeigodClean(officialRequire) {
   let officialVisible = false;
   let creatingCleanWindow = false;
   let closing = false;
-  let polling = false;
-  let pollTimer = null;
+  let stateRefreshing = false;
+  let officialStateWatchGeneration = 0;
+  let officialStateWatchWindowId = 0;
+  let officialStateWatchRetryTimer = null;
   let bridgeFallbackTimer = null;
   let pendingStartUntil = 0;
   let monitoredGameId = '';
   let autoPauseInProgress = false;
   let autoStartBusy = false;
-  let autoWatcherPolling = false;
   let autoCandidateIds = [];
   let autoCandidatesLoadedAt = 0;
+  let autoIndexGeneration = 0;
+  let autoIndexPromise = null;
+  let autoEvaluationPromise = null;
   const autoGameCache = new Map();
   const autoWatchStates = new Map();
+  const autoProcessIndex = new Map();
+  const pendingAutoGameIds = new Set();
+  const autoRetryTimers = new Map();
   let lastOfficialState = {
     ready: false,
     isLogin: false,
@@ -117,20 +125,24 @@ module.exports = function startLeigodClean(officialRequire) {
   prepareLog();
   log(`LeigodClean runtime starting; client=${officialClientVersion}`);
 
-  let win32Addon = null;
+  let processEvents = null;
   try {
-    win32Addon = officialRequire('@leigod-rs/win32-node-addon');
+    const launcherPath = fs.readFileSync(launcherPathFile, 'utf8').trim();
+    if (!launcherPath || !fs.existsSync(launcherPath)) {
+      throw new Error('无法定位 LeigodClean 进程事件服务。');
+    }
+    processEvents = new ProcessEventSource({ launcherPath, log });
   } catch (error) {
-    log(`Native process API unavailable: ${messageOf(error)}`);
+    log(`Process event service unavailable: ${messageOf(error)}`);
   }
 
   const bridge = new OfficialBridge(() => officialWindow, log);
   const monitor = new ProcessMonitor({
     isRunning: async (processName) => {
-      if (!win32Addon?.isProcessRunning) {
-        throw new Error('官方进程检测组件不可用。');
+      if (!processEvents) {
+        throw new Error('进程事件服务不可用。');
       }
-      return Boolean(win32Addon.isProcessRunning(processName, ''));
+      return processEvents.isRunning(processName);
     },
     pause: async (reason) => performPause(reason),
     onState: (snapshot) => {
@@ -138,9 +150,13 @@ module.exports = function startLeigodClean(officialRequire) {
       sendState();
       updateTrayMenu();
     },
-    pollIntervalMs: 1000,
-    missThreshold: 2,
   });
+  if (processEvents) {
+    monitor.observerUnavailable('进程事件服务正在启动。');
+    processEvents.subscribe(handleProcessEvent);
+  } else {
+    monitor.observerUnavailable('进程事件服务不可用。');
+  }
 
   patchOfficialIpc();
   observeWindows();
@@ -153,7 +169,7 @@ module.exports = function startLeigodClean(officialRequire) {
       log(`Tray initialization failed: ${messageOf(error)}`);
     }
     createCleanWindow();
-    startPolling();
+    processEvents?.start();
     try {
       configureLoginItem(settings.launchAtLogin);
     } catch (error) {
@@ -275,6 +291,7 @@ module.exports = function startLeigodClean(officialRequire) {
           bridge.invalidate(window);
           officialWindow = null;
           officialWindowScore = -1;
+          stopOfficialStateWatch();
           lastOfficialState = { ...lastOfficialState, ready: false };
           sendState();
         }
@@ -284,7 +301,7 @@ module.exports = function startLeigodClean(officialRequire) {
       bridge.invalidate(window);
     }
     void bridge.install()
-      .then(() => pollOfficialState())
+      .then(() => startOfficialStateWatch(window))
       .catch((error) => log(`Official bridge install deferred: ${messageOf(error)}`));
     scheduleCompatibilityFallback();
 
@@ -522,7 +539,7 @@ module.exports = function startLeigodClean(officialRequire) {
   async function invokeCleanMethod(method, payload) {
     switch (method) {
       case 'initialize':
-        await pollOfficialState();
+        await refreshOfficialState();
         return combinedState();
       case 'searchGames':
         return bridge.call('searchGames', {
@@ -592,11 +609,8 @@ module.exports = function startLeigodClean(officialRequire) {
           settings = nextSettings;
         }
         saveSettings();
-        autoGameCache.clear();
-        autoCandidateIds = [];
-        autoCandidatesLoadedAt = 0;
-        autoWatchStates.clear();
-        void pollAutoAcceleration();
+        resetAutoAccelerationIndex(true);
+        void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
         if (!settings.autoPauseEnabled) {
           monitor.stop('automatic-pause-disabled');
         } else if (lastOfficialState.gameId && lastOfficialState.accStatus !== 'normal') {
@@ -623,7 +637,7 @@ module.exports = function startLeigodClean(officialRequire) {
         autoGameCache.delete(gameId);
         autoWatchStates.delete(gameId);
         saveSettings();
-        void pollAutoAcceleration();
+        void refreshAutoAccelerationIndex({ evaluate: true });
         return publicSettings();
       }
       case 'rememberSelection': {
@@ -633,7 +647,7 @@ module.exports = function startLeigodClean(officialRequire) {
         saveSettings();
         if (settings.autoAccelerationEnabled) {
           autoWatchStates.delete(gameId);
-          void pollAutoAcceleration();
+          void refreshAutoAccelerationIndex({ evaluate: true });
         }
         return selection;
       }
@@ -655,101 +669,321 @@ module.exports = function startLeigodClean(officialRequire) {
     }
   }
 
-  function startPolling() {
-    if (pollTimer) {
+  async function refreshOfficialState() {
+    if (stateRefreshing || !officialWindow || officialWindow.isDestroyed()) {
       return;
     }
-    pollTimer = setInterval(() => void pollOfficialState(), 1000);
-    void pollOfficialState();
-  }
-
-  async function pollOfficialState() {
-    if (polling || !officialWindow || officialWindow.isDestroyed()) {
-      sendState();
-      return;
-    }
-    polling = true;
+    stateRefreshing = true;
     try {
-      const next = await bridge.call('state');
-      lastOfficialState = { ...next, ready: Boolean(next.ready) };
-      if (lastOfficialState.ready) {
-        cancelCompatibilityFallback();
-      }
-
-      const gameId = String(next.gameId || '');
-      if (gameId && next.accStatus !== 'normal' && monitoredGameId !== gameId) {
-        void attachMonitor(gameId);
-      } else if (monitoredGameId && next.accStatus === 'normal' && !autoPauseInProgress &&
-        monitor.snapshot.state !== STATES.PAUSED) {
-        monitoredGameId = '';
-        monitor.stop('acceleration-ended');
-      }
-
-      if (next.needsAttention && Date.now() < pendingStartUntil) {
-        pendingStartUntil = 0;
-        showOfficialWindow();
-      }
-      void pollAutoAcceleration();
+      acceptOfficialState(await bridge.call('state'));
     } catch (error) {
-      lastOfficialState = {
+      acceptOfficialState({
         ...lastOfficialState,
         ready: false,
         error: messageOf(error),
-      };
+      });
     } finally {
-      polling = false;
-      sendState();
+      stateRefreshing = false;
     }
   }
 
-  async function pollAutoAcceleration() {
-    const dedicatedGameIds = resolveAutoGameIds(settings);
-    const hasGlobalTargets = settings.autoAccelerationEnabled === true;
-    if (autoWatcherPolling || autoStartBusy || (!hasGlobalTargets && dedicatedGameIds.length === 0) ||
-      !lastOfficialState.ready || !win32Addon?.isProcessRunning) {
+  function startOfficialStateWatch(window) {
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
       return;
     }
-    autoWatcherPolling = true;
+    if (officialStateWatchWindowId === window.webContents.id &&
+      officialStateWatchGeneration > 0) {
+      return;
+    }
+    stopOfficialStateWatch();
+    officialStateWatchWindowId = window.webContents.id;
+    const generation = ++officialStateWatchGeneration;
+    void watchOfficialState(window, generation, 0);
+  }
+
+  function stopOfficialStateWatch() {
+    officialStateWatchGeneration += 1;
+    officialStateWatchWindowId = 0;
+    if (officialStateWatchRetryTimer) {
+      clearTimeout(officialStateWatchRetryTimer);
+      officialStateWatchRetryTimer = null;
+    }
+  }
+
+  async function watchOfficialState(window, generation, afterRevision) {
+    if (generation !== officialStateWatchGeneration || window !== officialWindow ||
+      window.isDestroyed() || window.webContents.isDestroyed() || closing) {
+      return;
+    }
     try {
-      if (hasGlobalTargets && Date.now() - autoCandidatesLoadedAt >= 5000) {
+      const update = await bridge.call('watchState', { afterRevision, timeoutMs: 60000 });
+      if (generation !== officialStateWatchGeneration || window !== officialWindow || closing) {
+        return;
+      }
+      acceptOfficialState(update?.state);
+      if (update?.heartbeat && settings.autoAccelerationEnabled &&
+        Date.now() - autoCandidatesLoadedAt >= 5 * 60 * 1000) {
+        void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
+      }
+      const revision = Number.isSafeInteger(Number(update?.revision))
+        ? Number(update.revision)
+        : afterRevision;
+      setImmediate(() => void watchOfficialState(window, generation, revision));
+    } catch (error) {
+      if (generation !== officialStateWatchGeneration || window !== officialWindow || closing) {
+        return;
+      }
+      const message = messageOf(error);
+      log(`Official state subscription interrupted: ${message}`);
+      acceptOfficialState({ ...lastOfficialState, ready: false, error: message });
+      officialStateWatchRetryTimer = setTimeout(() => {
+        officialStateWatchRetryTimer = null;
+        void watchOfficialState(window, generation, afterRevision);
+      }, 2000);
+      officialStateWatchRetryTimer?.unref?.();
+    }
+  }
+
+  function handleProcessEvent(event) {
+    if (!processEvents) {
+      return;
+    }
+    if (event.type === 'health') {
+      if (!event.ready) {
+        monitor.observerUnavailable(event.error || '进程事件服务正在重新连接。');
+        log(`Process event service state=${event.status}${event.error ? ` error=${event.error}` : ''}`);
+      }
+      sendState();
+      return;
+    }
+    if (event.type !== 'change' || !processEvents.snapshot.ready) {
+      return;
+    }
+
+    const fullSnapshot = event.kind === 'snapshot';
+    const monitorWasUnavailable = !monitor.snapshot.observerReady;
+    void monitor.observerAvailable()
+      .then(() => monitorWasUnavailable
+        ? monitor.snapshot
+        : monitor.processesChanged(event.names, fullSnapshot));
+    handleAutomaticProcessChange(event.names, fullSnapshot, event.kind, event.initial);
+    sendState();
+  }
+
+  function handleAutomaticProcessChange(names, fullSnapshot, kind, initial) {
+    if (!processEvents?.snapshot.ready) {
+      return;
+    }
+    if (fullSnapshot && (initial || autoProcessIndex.size === 0)) {
+      void refreshAutoAccelerationIndex({ evaluate: true });
+      return;
+    }
+
+    const gameIds = new Set();
+    const changedProcesses = normalizeProcesses(names);
+    for (const processName of changedProcesses) {
+      for (const gameId of autoProcessIndex.get(processKey(processName)) ?? []) {
+        gameIds.add(gameId);
+      }
+    }
+    queueAutoEvaluation(gameIds);
+
+    if ((kind === 'started' || fullSnapshot) && changedProcesses.length > 0 &&
+      settings.autoAccelerationEnabled && gameIds.size === 0 &&
+      Date.now() - autoCandidatesLoadedAt >= 30000) {
+      void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
+    }
+  }
+
+  function resetAutoAccelerationIndex(clearCandidates = false) {
+    autoIndexGeneration += 1;
+    autoIndexPromise = null;
+    autoProcessIndex.clear();
+    pendingAutoGameIds.clear();
+    autoGameCache.clear();
+    autoWatchStates.clear();
+    for (const timer of autoRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    autoRetryTimers.clear();
+    if (clearCandidates) {
+      autoCandidateIds = [];
+      autoCandidatesLoadedAt = 0;
+    }
+  }
+
+  async function refreshAutoAccelerationIndex({ forceCandidates = false, evaluate = false } = {}) {
+    const dedicatedGameIds = resolveAutoGameIds(settings);
+    const hasGlobalTargets = settings.autoAccelerationEnabled === true;
+    if ((!hasGlobalTargets && dedicatedGameIds.length === 0) || !lastOfficialState.ready) {
+      if (!hasGlobalTargets && dedicatedGameIds.length === 0) {
+        resetAutoAccelerationIndex(true);
+      }
+      return;
+    }
+    if (autoIndexPromise) {
+      const pendingIndex = autoIndexPromise;
+      const pendingGeneration = autoIndexGeneration;
+      await pendingIndex;
+      if (evaluate && pendingGeneration === autoIndexGeneration) {
+        queueAutoEvaluation(resolveAutoGameIds(settings, autoCandidateIds));
+      }
+      return;
+    }
+
+    const generation = ++autoIndexGeneration;
+    const buildPromise = (async () => {
+      if (hasGlobalTargets && (forceCandidates || autoCandidatesLoadedAt === 0)) {
         try {
           const discovered = await bridge.call('autoCandidates');
+          if (generation !== autoIndexGeneration) {
+            return;
+          }
           autoCandidateIds = Array.isArray(discovered) ? discovered : [];
-        } catch (error) {
-          log(`Global automatic acceleration discovery failed: ${messageOf(error)}`);
-        } finally {
           autoCandidatesLoadedAt = Date.now();
+        } catch (error) {
+          if (generation === autoIndexGeneration) {
+            autoCandidatesLoadedAt = 0;
+            log(`Global automatic acceleration discovery failed: ${messageOf(error)}`);
+          }
         }
       }
+
       const gameIds = resolveAutoGameIds(settings, autoCandidateIds);
+      const entries = [];
       for (const gameId of gameIds) {
         try {
-          const game = await getAutoGame(gameId);
-          let watchState = autoWatchStates.get(gameId);
-          const running = game.processes.some((processName) =>
-            Boolean(win32Addon.isProcessRunning(processName, '')));
-          const evaluation = evaluateAutoWatchState(watchState, {
-            running,
-            loggedIn: lastOfficialState.isLogin,
-            accelerating: lastOfficialState.accStatus !== 'normal',
-            activeGameId: lastOfficialState.gameId,
-            gameId,
-          });
-          watchState = evaluation.state;
-          autoWatchStates.set(gameId, watchState);
-          if (evaluation.shouldStart) {
-            const started = await triggerAutoAcceleration(gameId, game);
-            autoWatchStates.set(gameId, completeAutoWatchAttempt(watchState, started));
-            break;
-          }
+          entries.push([gameId, await getAutoGame(gameId)]);
         } catch (error) {
-          log(`Automatic acceleration check failed for game ${gameId}: ${messageOf(error)}`);
+          log(`Automatic acceleration index skipped game ${gameId}: ${messageOf(error)}`);
+        }
+        if (generation !== autoIndexGeneration) {
+          return;
         }
       }
-    } catch (error) {
-      log(`Automatic acceleration check failed: ${messageOf(error)}`);
+
+      autoProcessIndex.clear();
+      const retainedIds = new Set(entries.map(([gameId]) => gameId));
+      for (const [gameId, game] of entries) {
+        for (const processName of game.processes) {
+          const key = processKey(processName);
+          if (!key) {
+            continue;
+          }
+          if (!autoProcessIndex.has(key)) {
+            autoProcessIndex.set(key, new Set());
+          }
+          autoProcessIndex.get(key).add(gameId);
+        }
+      }
+      for (const gameId of autoWatchStates.keys()) {
+        if (!retainedIds.has(gameId)) {
+          autoWatchStates.delete(gameId);
+          clearAutoRetry(gameId);
+        }
+      }
+      if (evaluate) {
+        queueAutoEvaluation(gameIds);
+      }
+    })();
+    autoIndexPromise = buildPromise;
+    try {
+      await buildPromise;
     } finally {
-      autoWatcherPolling = false;
+      if (generation === autoIndexGeneration && autoIndexPromise === buildPromise) {
+        autoIndexPromise = null;
+      }
+    }
+  }
+
+  function queueAutoEvaluation(gameIds) {
+    for (const value of gameIds ?? []) {
+      const gameId = String(value ?? '');
+      if (gameId) {
+        pendingAutoGameIds.add(gameId);
+      }
+    }
+    if (pendingAutoGameIds.size === 0) {
+      return;
+    }
+    if (!autoEvaluationPromise) {
+      autoEvaluationPromise = drainAutoEvaluations().finally(() => {
+        autoEvaluationPromise = null;
+        if (pendingAutoGameIds.size > 0) {
+          queueAutoEvaluation([]);
+        }
+      });
+    }
+  }
+
+  async function drainAutoEvaluations() {
+    while (pendingAutoGameIds.size > 0 && !closing) {
+      const order = resolveAutoGameIds(settings, autoCandidateIds);
+      const batch = order.filter((gameId) => pendingAutoGameIds.delete(gameId));
+      for (const gameId of batch) {
+        await evaluateAutoGame(gameId);
+      }
+      for (const stale of pendingAutoGameIds) {
+        if (!order.includes(stale)) {
+          pendingAutoGameIds.delete(stale);
+        }
+      }
+    }
+  }
+
+  async function evaluateAutoGame(gameId) {
+    const game = autoGameCache.get(gameId);
+    if (!game || !processEvents?.snapshot.ready ||
+      !resolveAutoGameIds(settings, autoCandidateIds).includes(gameId)) {
+      return;
+    }
+    try {
+      const running = game.processes.some((processName) => processEvents.isRunning(processName));
+      let watchState = autoWatchStates.get(gameId);
+      const evaluation = evaluateAutoWatchState(watchState, {
+        running,
+        loggedIn: lastOfficialState.isLogin,
+        accelerating: lastOfficialState.accStatus !== 'normal',
+        activeGameId: lastOfficialState.gameId,
+        gameId,
+      });
+      watchState = evaluation.state;
+      autoWatchStates.set(gameId, watchState);
+      if (!running) {
+        clearAutoRetry(gameId);
+        return;
+      }
+      if (evaluation.shouldStart && !autoStartBusy) {
+        clearAutoRetry(gameId);
+        const started = await triggerAutoAcceleration(gameId, game);
+        watchState = completeAutoWatchAttempt(watchState, started);
+        autoWatchStates.set(gameId, watchState);
+      }
+      scheduleAutoRetry(gameId, watchState);
+    } catch (error) {
+      log(`Automatic acceleration event failed for game ${gameId}: ${messageOf(error)}`);
+    }
+  }
+
+  function scheduleAutoRetry(gameId, watchState) {
+    clearAutoRetry(gameId);
+    const retryAt = Number(watchState?.retryAt) || 0;
+    if (retryAt <= Date.now()) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      autoRetryTimers.delete(gameId);
+      queueAutoEvaluation([gameId]);
+    }, retryAt - Date.now());
+    timer?.unref?.();
+    autoRetryTimers.set(gameId, timer);
+  }
+
+  function clearAutoRetry(gameId) {
+    const timer = autoRetryTimers.get(gameId);
+    if (timer) {
+      clearTimeout(timer);
+      autoRetryTimers.delete(gameId);
     }
   }
 
@@ -913,10 +1147,12 @@ module.exports = function startLeigodClean(officialRequire) {
   }
 
   function finishClose() {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
+    stopOfficialStateWatch();
+    processEvents?.stop();
+    for (const timer of autoRetryTimers.values()) {
+      clearTimeout(timer);
     }
+    autoRetryTimers.clear();
     cancelCompatibilityFallback();
     if (officialWindow && !officialWindow.isDestroyed()) {
       officialWindow.destroy();
@@ -947,6 +1183,15 @@ module.exports = function startLeigodClean(officialRequire) {
         officialVisible,
       },
       monitor: monitor.snapshot,
+      processEvents: processEvents?.snapshot ?? {
+        status: 'unavailable',
+        ready: false,
+        error: '进程事件服务不可用。',
+        processCount: 0,
+        lastEventAt: 0,
+        restartCount: 0,
+        generation: 0,
+      },
       settings: publicSettings(),
     };
   }
@@ -955,8 +1200,43 @@ module.exports = function startLeigodClean(officialRequire) {
     if (!next || typeof next !== 'object') {
       return;
     }
+    const previous = lastOfficialState;
     lastOfficialState = { ...next, ready: Boolean(next.ready) };
-    sendState();
+    if (lastOfficialState.ready) {
+      cancelCompatibilityFallback();
+    }
+
+    const gameId = String(lastOfficialState.gameId || '');
+    if (gameId && lastOfficialState.accStatus !== 'normal' && monitoredGameId !== gameId) {
+      void attachMonitor(gameId);
+    } else if (monitoredGameId && lastOfficialState.accStatus === 'normal' &&
+      !autoPauseInProgress && monitor.snapshot.state !== STATES.PAUSED) {
+      monitoredGameId = '';
+      monitor.stop('acceleration-ended');
+    }
+
+    if (lastOfficialState.needsAttention && Date.now() < pendingStartUntil) {
+      pendingStartUntil = 0;
+      showOfficialWindow();
+    }
+
+    if (lastOfficialState.ready && !previous.ready) {
+      void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
+    } else if (lastOfficialState.ready && settings.autoAccelerationEnabled && gameId &&
+      !autoCandidateIds.map(String).includes(gameId)) {
+      autoCandidateIds = [gameId, ...autoCandidateIds];
+      void refreshAutoAccelerationIndex({ evaluate: true });
+    }
+    if (lastOfficialState.ready &&
+      ((!previous.isLogin && lastOfficialState.isLogin) ||
+        (previous.accStatus !== 'normal' && lastOfficialState.accStatus === 'normal') ||
+        String(previous.gameId || '') !== gameId)) {
+      queueAutoEvaluation(resolveAutoGameIds(settings, autoCandidateIds));
+    }
+
+    if (JSON.stringify(previous) !== JSON.stringify(lastOfficialState)) {
+      sendState();
+    }
   }
 
   function sendState() {
@@ -976,7 +1256,7 @@ module.exports = function startLeigodClean(officialRequire) {
     }
     return {
       generatedAt: new Date().toISOString(),
-      runtimeVersion: 2,
+      runtimeVersion: 3,
       application: product,
       startedAt,
       officialClientVersion,
@@ -1153,6 +1433,10 @@ module.exports = function startLeigodClean(officialRequire) {
 
   function messageOf(error) {
     return error instanceof Error ? error.message : String(error ?? '未知错误');
+  }
+
+  function processKey(value) {
+    return normalizeProcessName(value).toLocaleLowerCase('en-US');
   }
 
   function failure(code, message) {
