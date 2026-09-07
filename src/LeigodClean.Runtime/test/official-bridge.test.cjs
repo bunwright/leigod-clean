@@ -237,6 +237,10 @@ test('manual acceleration and account-time controls use independent official act
       await window.__leigodCleanOfficial.call('autoCandidates'),
       [1, 42],
     );
+    assert.deepEqual(
+      await window.__leigodCleanOfficial.call('recentGames', { limit: 3 }),
+      [{ id: 42, title: 'Test Game', image: '' }],
+    );
     const unresolvedGame = await window.__leigodCleanOfficial.call('getGame', {
       gameId: 1,
       liveProcesses: true,

@@ -189,17 +189,34 @@
                   <span class="monitor-chip" id="monitorChip">空闲</span>
                 </div>
 
-                <div class="telemetry-focus" aria-live="polite">
-                  <span class="telemetry-focus-icon" aria-hidden="true">
-                    <svg id="telemetryDurationIcon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                    <svg id="telemetryDelayIcon" viewBox="0 0 24 24" hidden><path d="M4 14a8 8 0 0 1 16 0M7 17a5 5 0 0 1 10 0M10 20a2 2 0 0 1 4 0"/></svg>
-                    <svg id="telemetryLossIcon" viewBox="0 0 24 24" hidden><path d="M4 12h3l2-5 4 10 2-5h5"/><path d="m17 5 3 3m0-3-3 3"/></svg>
-                  </span>
-                  <span class="telemetry-focus-copy">
-                    <small id="telemetryLabel">加速时长</small>
-                    <strong id="telemetryValue">—</strong>
-                    <span id="telemetryCaption">开始加速后显示实时指标</span>
-                  </span>
+                <div class="telemetry-focus" id="telemetryFocus">
+                  <div class="telemetry-summary" aria-live="polite">
+                    <span class="telemetry-focus-icon" aria-hidden="true">
+                      <svg id="telemetryDurationIcon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                      <svg id="telemetryDelayIcon" viewBox="0 0 24 24" hidden><path d="M4 14a8 8 0 0 1 16 0M7 17a5 5 0 0 1 10 0M10 20a2 2 0 0 1 4 0"/></svg>
+                      <svg id="telemetryLossIcon" viewBox="0 0 24 24" hidden><path d="M4 12h3l2-5 4 10 2-5h5"/><path d="m17 5 3 3m0-3-3 3"/></svg>
+                    </span>
+                    <span class="telemetry-focus-copy">
+                      <small id="telemetryLabel">加速时长</small>
+                      <strong id="telemetryValue">—</strong>
+                      <span id="telemetryCaption">开始加速后显示实时指标</span>
+                    </span>
+                  </div>
+                  <div class="telemetry-chart" id="telemetryChart" hidden>
+                    <div class="telemetry-chart-toolbar">
+                      <span id="telemetryChartStats">等待采样</span>
+                      <div class="telemetry-range" id="telemetryRange" role="group" aria-label="图表时间跨度">
+                        <button type="button" data-range="60000">1 分</button>
+                        <button class="selected" type="button" data-range="300000">5 分</button>
+                        <button type="button" data-range="900000">15 分</button>
+                      </div>
+                    </div>
+                    <div class="telemetry-canvas-wrap">
+                      <canvas id="telemetryCanvas" role="img" aria-label="近期线路指标图表"></canvas>
+                      <span class="telemetry-chart-empty" id="telemetryChartEmpty">等待线路数据</span>
+                    </div>
+                    <div class="telemetry-axis"><span id="telemetryRangeStart">5 分钟前</span><span>现在</span></div>
+                  </div>
                 </div>
 
                 <div class="metric-switcher" id="metricSwitcher" role="tablist" aria-label="运行指标">
@@ -293,89 +310,95 @@
           </button>
         </header>
 
-        <div class="dialog-section">
-          <h3>自动化</h3>
-          <div class="settings-row switch-row">
-            <label for="autoAccelerationInput">
-              <strong>所有游戏自动加速</strong>
-              <small>覆盖本地与近期游戏；单独启用的游戏不受此开关影响</small>
-            </label>
-            <label class="switch"><input id="autoAccelerationInput" type="checkbox"><span></span></label>
+        <div class="settings-layout">
+          <div class="settings-column">
+            <div class="dialog-section">
+              <h3>自动化</h3>
+              <div class="settings-row switch-row">
+                <label for="autoAccelerationInput">
+                  <strong>所有游戏自动加速</strong>
+                  <small>覆盖本地与近期游戏；单独启用的游戏不受此开关影响</small>
+                </label>
+                <label class="switch"><input id="autoAccelerationInput" type="checkbox"><span></span></label>
+              </div>
+              <div class="settings-row switch-row">
+                <label for="autoPauseInput">
+                  <strong>自动暂停</strong>
+                  <small>游戏进程结束后自动停止加速并暂停时长</small>
+                </label>
+                <label class="switch"><input id="autoPauseInput" type="checkbox"><span></span></label>
+              </div>
+              <div class="settings-row switch-row">
+                <label for="launchAtLoginInput">
+                  <strong>开机启动</strong>
+                  <small>登录 Windows 后在系统托盘中启动</small>
+                </label>
+                <label class="switch"><input id="launchAtLoginInput" type="checkbox"><span></span></label>
+              </div>
+              <div class="settings-row switch-row">
+                <label for="minimizeToTrayInput">
+                  <strong>最小化到系统托盘</strong>
+                  <small>最小化时隐藏任务栏窗口并保持后台运行</small>
+                </label>
+                <label class="switch"><input id="minimizeToTrayInput" type="checkbox"><span></span></label>
+              </div>
+              <div class="settings-row switch-row">
+                <label for="pauseOnCloseInput">
+                  <strong>关闭时暂停</strong>
+                  <small>退出 LeigodClean 时安全结束当前会话</small>
+                </label>
+                <label class="switch"><input id="pauseOnCloseInput" type="checkbox"><span></span></label>
+              </div>
+              <div class="settings-row switch-row">
+                <label for="notificationsInput">
+                  <strong>系统通知</strong>
+                  <small>自动加速、自动暂停或失败时显示 Windows 通知</small>
+                </label>
+                <label class="switch"><input id="notificationsInput" type="checkbox"><span></span></label>
+              </div>
+            </div>
           </div>
-          <div class="settings-row switch-row">
-            <label for="autoPauseInput">
-              <strong>自动暂停</strong>
-              <small>游戏进程结束后自动停止加速并暂停时长</small>
-            </label>
-            <label class="switch"><input id="autoPauseInput" type="checkbox"><span></span></label>
-          </div>
-          <div class="settings-row switch-row">
-            <label for="launchAtLoginInput">
-              <strong>开机启动</strong>
-              <small>登录 Windows 后在系统托盘中启动</small>
-            </label>
-            <label class="switch"><input id="launchAtLoginInput" type="checkbox"><span></span></label>
-          </div>
-          <div class="settings-row switch-row">
-            <label for="minimizeToTrayInput">
-              <strong>最小化到系统托盘</strong>
-              <small>最小化时隐藏任务栏窗口并保持后台运行</small>
-            </label>
-            <label class="switch"><input id="minimizeToTrayInput" type="checkbox"><span></span></label>
-          </div>
-          <div class="settings-row switch-row">
-            <label for="pauseOnCloseInput">
-              <strong>关闭时暂停</strong>
-              <small>退出 LeigodClean 时安全结束当前会话</small>
-            </label>
-            <label class="switch"><input id="pauseOnCloseInput" type="checkbox"><span></span></label>
-          </div>
-          <div class="settings-row switch-row">
-            <label for="notificationsInput">
-              <strong>系统通知</strong>
-              <small>自动加速、自动暂停或失败时显示 Windows 通知</small>
-            </label>
-            <label class="switch"><input id="notificationsInput" type="checkbox"><span></span></label>
-          </div>
-        </div>
 
-        <div class="dialog-section">
-          <h3>时间</h3>
-          <div class="settings-row">
-            <label for="startupTimeoutInput">
-              <strong>启动等待</strong>
-              <small>加速后等待首个游戏进程出现</small>
-            </label>
-            <span class="number-field"><input id="startupTimeoutInput" type="number" min="1" max="60" step="1"><em>分钟</em></span>
-          </div>
-          <div class="settings-row">
-            <label for="graceInput">
-              <strong>退出宽限</strong>
-              <small>进程全部退出后继续等待接力或重启</small>
-            </label>
-            <span class="number-field"><input id="graceInput" type="number" min="0.25" max="60" step="0.25"><em>分钟</em></span>
-          </div>
-        </div>
+          <div class="settings-column">
+            <div class="dialog-section">
+              <h3>时间</h3>
+              <div class="settings-row">
+                <label for="startupTimeoutInput">
+                  <strong>启动等待</strong>
+                  <small>加速后等待首个游戏进程出现</small>
+                </label>
+                <span class="number-field"><input id="startupTimeoutInput" type="number" min="1" max="60" step="1"><em>分钟</em></span>
+              </div>
+              <div class="settings-row">
+                <label for="graceInput">
+                  <strong>退出宽限</strong>
+                  <small>进程全部退出后继续等待接力或重启</small>
+                </label>
+                <span class="number-field"><input id="graceInput" type="number" min="0.25" max="60" step="0.25"><em>分钟</em></span>
+              </div>
+            </div>
 
-        <div class="dialog-section">
-          <h3>当前游戏进程</h3>
-          <label class="process-editor">
-            <span id="processEditorLabel">请先选择游戏</span>
-            <textarea id="processOverrideInput" rows="4" placeholder="Game.exe, Launcher.exe" disabled></textarea>
-          </label>
-          <p class="field-help">留空时使用内置目录或官方游戏库；多个进程以逗号或换行分隔。</p>
-        </div>
+            <div class="dialog-section">
+              <h3>当前游戏进程</h3>
+              <label class="process-editor">
+                <span id="processEditorLabel">请先选择游戏</span>
+                <textarea id="processOverrideInput" rows="3" placeholder="Game.exe, Launcher.exe" disabled></textarea>
+              </label>
+              <p class="field-help">留空时使用内置目录或官方游戏库；多个进程以逗号或换行分隔。</p>
+            </div>
 
-        <div class="dialog-tools">
-          <button class="link-button" id="openLogsButton" type="button">打开日志</button>
-          <button class="link-button" id="copyDiagnosticsButton" type="button">复制诊断信息</button>
-        </div>
-        <div class="official-fallback">
-          <div>
-            <strong>官方客户端界面</strong>
-            <small id="officialClientDescription">登录或使用 LeigodClean 未提供的功能</small>
+            <div class="dialog-tools">
+              <button class="link-button" id="openLogsButton" type="button">打开日志</button>
+              <button class="link-button" id="copyDiagnosticsButton" type="button">复制诊断信息</button>
+            </div>
+            <div class="official-fallback">
+              <div>
+                <strong>官方客户端界面</strong>
+                <small id="officialClientDescription">登录或使用 LeigodClean 未提供的功能</small>
+              </div>
+              <button class="secondary-button" id="settingsOfficialButton" type="button">打开</button>
+            </div>
           </div>
-          <button class="secondary-button" id="settingsOfficialButton" type="button">打开</button>
         </div>
         <footer class="dialog-footer">
           <button class="secondary-button" id="settingsCancelButton" type="button">取消</button>
@@ -390,6 +413,7 @@
     </div>
 
     <script src="view-state.js"></script>
+    <script src="telemetry.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

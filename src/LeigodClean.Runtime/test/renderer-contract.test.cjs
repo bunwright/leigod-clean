@@ -9,6 +9,7 @@ const rendererRoot = path.join(__dirname, '..', 'renderer');
 const html = fs.readFileSync(path.join(rendererRoot, 'index.html'), 'utf8');
 const script = fs.readFileSync(path.join(rendererRoot, 'app.js'), 'utf8');
 const viewStateScript = fs.readFileSync(path.join(rendererRoot, 'view-state.js'), 'utf8');
+const telemetryScript = fs.readFileSync(path.join(rendererRoot, 'telemetry.js'), 'utf8');
 const styles = fs.readFileSync(path.join(rendererRoot, 'styles.css'), 'utf8');
 const mainRuntime = fs.readFileSync(path.join(rendererRoot, '..', 'main.cjs'), 'utf8');
 const preload = fs.readFileSync(path.join(rendererRoot, '..', 'preload.cjs'), 'utf8');
@@ -18,6 +19,7 @@ const autoAcceleration = fs.readFileSync(
   'utf8',
 );
 const officialTray = fs.readFileSync(path.join(rendererRoot, '..', 'official-tray.cjs'), 'utf8');
+const trayRuntime = fs.readFileSync(path.join(rendererRoot, '..', 'tray.cjs'), 'utf8');
 const communityProcesses = JSON.parse(fs.readFileSync(
   path.join(rendererRoot, '..', 'community-processes.json'),
   'utf8',
@@ -44,7 +46,7 @@ test('renderer keeps scripts external and declares a restrictive policy', () => 
   assert.match(html, /Content-Security-Policy/iu);
   assert.match(html, /connect-src 'none'/u);
   assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/iu);
-  assert.match(html, /src="view-state\.js"[\s\S]*src="app\.js"/u);
+  assert.match(html, /src="view-state\.js"[\s\S]*src="telemetry\.js"[\s\S]*src="app\.js"/u);
 });
 
 test('main runtime avoids globals missing from the bundled Electron baseline', () => {
@@ -56,7 +58,7 @@ test('clean loading window is registered before the official runtime and officia
     mainRuntime.indexOf('app.whenReady().then') < mainRuntime.indexOf("officialRequire('./main.jsc')"),
   );
   assert.match(mainRuntime, /function suppressOfficialWindow\(window\)/u);
-  assert.match(mainRuntime, /if \(!officialVisible\) \{\s*window\.hide\(\)/u);
+  assert.match(mainRuntime, /if \(!officialVisible\) \{[\s\S]{0,180}?window\.hide\(\)/u);
   assert.match(mainRuntime, /creatingCleanWindow \|\| window\.getTitle\(\) === 'LeigodClean'/u);
   assert.match(mainRuntime, /showing the official interface/u);
   assert.match(mainRuntime, /Clean renderer failed to load/u);
@@ -65,6 +67,10 @@ test('clean loading window is registered before the official runtime and officia
   assert.doesNotMatch(html, /正在准备|尚未就绪|继续自动连接|正在连接|等待官方客户端/u);
   assert.match(html, /id="loadingState"[^>]*role="status"[^>]*aria-label="正在加载"/u);
   assert.match(html, /id="accountButton"[^>]*hidden/u);
+  assert.match(mainRuntime, /app\.setAppUserModelId\('io\.github\.bunwright\.leigodclean'\)/u);
+  assert.ok(
+    mainRuntime.indexOf('app.setAppUserModelId') < mainRuntime.indexOf("officialRequire('./main.jsc')"),
+  );
 });
 
 test('sidebar has a bounded native scroll container', () => {
@@ -78,7 +84,7 @@ test('toolbar is concise and exposes settings and about dialogs', () => {
   assert.match(html, /id="aboutButton"/u);
   assert.match(html, /id="aboutDialog"/u);
   assert.match(html, /M9\.671 4\.136/u);
-  assert.match(mainRuntime, /lastOfficialState\.accStatus,\s*lastOfficialState\.timeStatus,/u);
+  assert.match(mainRuntime, /buildTrayMenuTemplate/u);
 });
 
 test('remaining time uses hours and minutes instead of day-only rounding', () => {
@@ -105,6 +111,11 @@ test('primary acceleration control and switchable telemetry occupy the game work
   assert.match(html, /id="metricSwitcher"[^>]*role="tablist"/u);
   assert.match(html, /data-metric="duration"[\s\S]*data-metric="delay"[\s\S]*data-metric="loss"/u);
   assert.match(script, /function selectTelemetryMetric/u);
+  assert.match(html, /id="telemetryCanvas"[^>]*role="img"/u);
+  assert.match(html, /data-range="60000"[\s\S]*data-range="300000"[\s\S]*data-range="900000"/u);
+  assert.match(script, /model\.selectedMetric !== 'duration'/u);
+  assert.match(script, /setTimeout\([\s\S]*2_000/u);
+  assert.match(telemetryScript, /MAX_POINTS = 480/u);
   assert.match(styles, /\.workspace-grid\s*\{[^}]*align-items:\s*stretch/isu);
 });
 
@@ -140,15 +151,31 @@ test('process automation is event-driven and independent of the official native 
   assert.match(project, /PublishTrimmed>true/u);
 });
 
-test('official tray is suppressed without replacing the clean application tray', () => {
-  assert.match(mainRuntime, /installOfficialTraySuppression/u);
+test('official shell starts without taskbar painting and keeps the clean tray authoritative', () => {
+  assert.match(mainRuntime, /installOfficialShellIsolation/u);
   assert.ok(
-    mainRuntime.indexOf('installOfficialTraySuppression') < mainRuntime.indexOf("officialRequire('./main.jsc')"),
+    mainRuntime.indexOf('installOfficialShellIsolation') < mainRuntime.indexOf("officialRequire('./main.jsc')"),
   );
-  assert.match(mainRuntime, /finally\s*\{\s*restoreOfficialTray\(\)/u);
-  assert.match(officialTray, /property === 'Tray' \? SuppressedTray/u);
+  assert.match(mainRuntime, /finally\s*\{\s*restoreOfficialShell\(\)/u);
+  assert.match(officialTray, /property === 'Tray'/u);
+  assert.match(officialTray, /property === 'BrowserWindow'/u);
+  assert.match(officialTray, /paintWhenInitiallyHidden = false/u);
+  assert.match(officialTray, /backgroundThrottling:\s*true/u);
+  assert.match(officialTray, /property === 'setAppUserModelId'/u);
   assert.match(mainRuntime, /tray = new Tray\(/u);
+  assert.match(mainRuntime, /tray\.on\('right-click', showTrayContextMenu\)/u);
+  assert.match(mainRuntime, /tray\.popUpContextMenu/u);
+  assert.match(mainRuntime, /createTrayStatusIcons/u);
+  assert.match(trayRuntime, /red:\s*40,\s*green:\s*199,\s*blue:\s*111/su);
+  assert.doesNotMatch(trayRuntime, /打开官方客户端/u);
   assert.match(project, /official-tray\.cjs/u);
+  assert.match(project, /tray\.cjs/u);
+});
+
+test('preferences use a responsive two-column layout without requiring desktop scrolling', () => {
+  assert.match(html, /class="settings-layout"[\s\S]*class="settings-column"[\s\S]*class="settings-column"/u);
+  assert.match(styles, /\.settings-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/isu);
+  assert.match(styles, /\.settings-dialog form\s*\{[^}]*grid-template-rows:[^}]*overflow:\s*hidden/isu);
 });
 
 test('global and per-game automatic acceleration rules are independent', () => {

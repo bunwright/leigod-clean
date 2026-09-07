@@ -35,9 +35,14 @@ module.exports = function startLeigodClean(officialRequire) {
     executableLocation,
     executableMatchesLocations,
   } = require('./local-games.cjs');
-  const { installOfficialTraySuppression } = require('./official-tray.cjs');
+  const { installOfficialShellIsolation } = require('./official-tray.cjs');
   const { OfficialBridge } = require('./official-bridge.cjs');
   const { normalizeProcessName, ProcessEventSource } = require('./process-events.cjs');
+  const {
+    buildTrayMenuTemplate,
+    createTrayStatusIcons,
+    isAccelerationActive,
+  } = require('./tray.cjs');
   const {
     ProcessMonitor,
     STATES,
@@ -78,6 +83,7 @@ module.exports = function startLeigodClean(officialRequire) {
     autoAccelerateGames: {},
     gameSelections: {},
     processOverrides: {},
+    recentGameIds: [],
   });
   const community = readJson(path.join(runtimeRoot, 'community-processes.json'), {
     excludedGameIds: [],
@@ -90,7 +96,12 @@ module.exports = function startLeigodClean(officialRequire) {
   let cleanWindow = null;
   let tray = null;
   let appIcon = null;
-  let trayMenuSignature = '';
+  let trayIcons = null;
+  let trayStatusSignature = '';
+  let trayRecentGames = [];
+  let trayRecentGamesPromise = null;
+  let trayDurationClock = { gameId: '', source: 0, base: 0, anchoredAt: 0 };
+  const trayGameTitles = new Map();
   let officialVisible = false;
   let creatingCleanWindow = false;
   let closing = false;
@@ -139,6 +150,11 @@ module.exports = function startLeigodClean(officialRequire) {
     height: 62,
   });
 
+  appIcon = loadApplicationIcon();
+  if (process.platform === 'win32' && typeof app.setAppUserModelId === 'function') {
+    app.setAppUserModelId('io.github.bunwright.leigodclean');
+  }
+
   prepareLog();
   log(`LeigodClean runtime starting; client=${officialClientVersion}`);
 
@@ -165,7 +181,6 @@ module.exports = function startLeigodClean(officialRequire) {
     onState: (snapshot) => {
       log(`Monitor state=${snapshot.state} reason=${snapshot.reason} game=${snapshot.gameId}`);
       sendState();
-      updateTrayMenu();
     },
   });
   if (processEvents) {
@@ -199,11 +214,12 @@ module.exports = function startLeigodClean(officialRequire) {
     dialog.showErrorBox('LeigodClean', messageOf(error));
   });
 
-  let restoreOfficialTray = () => {};
+  let restoreOfficialShell = () => {};
   try {
-    restoreOfficialTray = installOfficialTraySuppression({
+    restoreOfficialShell = installOfficialShellIsolation({
       moduleLoader: require('node:module'),
       electron,
+      shouldShowWindow: () => officialVisible,
       log,
     });
     officialRequire('bytenode');
@@ -212,7 +228,7 @@ module.exports = function startLeigodClean(officialRequire) {
     log(`Official client failed to start: ${error?.stack ?? messageOf(error)}`);
     dialog.showErrorBox('LeigodClean', `官方客户端启动失败：${messageOf(error)}`);
   } finally {
-    restoreOfficialTray();
+    restoreOfficialShell();
   }
 
   function patchOfficialIpc() {
@@ -277,10 +293,13 @@ module.exports = function startLeigodClean(officialRequire) {
     if (window.isDestroyed()) {
       return;
     }
+    window.webContents.setBackgroundThrottling?.(true);
     if (!officialVisible) {
+      window.webContents.setAudioMuted?.(true);
       window.hide();
       window.setSkipTaskbar(true);
     } else {
+      window.webContents.setAudioMuted?.(false);
       window.setSkipTaskbar(false);
     }
     window.on('show', () => {
@@ -387,6 +406,7 @@ module.exports = function startLeigodClean(officialRequire) {
       creatingCleanWindow = false;
     }
 
+    cleanWindow.setIcon?.(appIcon);
     cleanWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     cleanWindow.webContents.on('will-navigate', (event, url) => {
       if (url !== cleanWindow.webContents.getURL()) {
@@ -413,6 +433,7 @@ module.exports = function startLeigodClean(officialRequire) {
       showOfficialWindow();
     });
     cleanWindow.once('ready-to-show', () => {
+      cleanWindow?.setIcon?.(appIcon);
       if (!startHidden || !tray) {
         cleanWindow?.show();
       }
@@ -457,43 +478,111 @@ module.exports = function startLeigodClean(officialRequire) {
     if (tray) {
       return;
     }
-    appIcon = nativeImage.createFromPath(path.join(runtimeRoot, 'assets', 'leigodclean.png'));
-    if (appIcon.isEmpty()) {
-      appIcon = nativeImage.createFromPath(process.execPath);
-    }
-    tray = new Tray(appIcon.resize({ width: 20, height: 20 }));
-    tray.setToolTip('LeigodClean');
+    trayIcons = createTrayStatusIcons(nativeImage, appIcon);
+    tray = new Tray(trayIcons.idle);
     tray.on('click', showCleanWindow);
-    updateTrayMenu(true);
+    tray.on('right-click', showTrayContextMenu);
+    tray.setIgnoreDoubleClickEvents?.(true);
+    updateTrayStatus(true);
+    void refreshTrayRecentGames();
   }
 
-  function updateTrayMenu(force = false) {
+  function loadApplicationIcon() {
+    const candidates = [
+      path.join(runtimeRoot, 'assets', 'leigodclean.png'),
+      path.join(runtimeRoot, 'assets', 'leigodclean.ico'),
+      process.execPath,
+    ];
+    for (const candidate of candidates) {
+      const icon = nativeImage.createFromPath(candidate);
+      if (!icon.isEmpty()) {
+        return icon;
+      }
+    }
+    throw new Error('无法加载 LeigodClean 应用图标。');
+  }
+
+  function updateTrayStatus(force = false) {
     if (!tray) {
       return;
     }
+    const active = lastOfficialState.ready === true &&
+      Boolean(officialWindow && !officialWindow.isDestroyed()) &&
+      lastOfficialState.accStatus === 'speeding';
+    const title = trayGameTitles.get(String(lastOfficialState.gameId || '')) ?? '';
     const signature = [
-      lastOfficialState.isLogin,
-      lastOfficialState.accStatus,
-      lastOfficialState.timeStatus,
-      monitor.snapshot.state,
+      active,
+      title,
     ].join(':');
-    if (!force && signature === trayMenuSignature) {
+    if (!force && signature === trayStatusSignature) {
       return;
     }
-    trayMenuSignature = signature;
-    const canPause = Boolean(lastOfficialState.isLogin &&
-      (lastOfficialState.accStatus !== 'normal' || lastOfficialState.timeStatus !== 'pause'));
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: '显示 LeigodClean', click: showCleanWindow },
-      {
-        label: '停止加速并暂停时长',
-        enabled: canPause,
-        click: () => void pauseFromTray(),
+    trayStatusSignature = signature;
+    tray.setImage(active ? trayIcons.active : trayIcons.idle);
+    tray.setToolTip(active
+      ? `LeigodClean · ${title || '加速中'}`
+      : 'LeigodClean');
+  }
+
+  function synchronizeTrayDuration(previous, next) {
+    const active = isAccelerationActive(next);
+    const gameId = active ? String(next.gameId || '') : '';
+    const source = Math.max(0, Number(next.duration) || 0);
+    const sessionChanged = gameId !== trayDurationClock.gameId ||
+      String(next.accStatus || 'normal') !== String(previous.accStatus || 'normal');
+    if (!gameId) {
+      trayDurationClock = { gameId: '', source: 0, base: 0, anchoredAt: 0 };
+      return;
+    }
+    if (sessionChanged || source !== trayDurationClock.source) {
+      trayDurationClock = {
+        gameId,
+        source,
+        base: source,
+        anchoredAt: Date.now(),
+      };
+    }
+  }
+
+  function currentTrayDuration() {
+    const source = Math.max(0, Number(lastOfficialState.duration) || 0);
+    if (lastOfficialState.accStatus !== 'speeding' ||
+      String(lastOfficialState.gameId || '') !== trayDurationClock.gameId ||
+      trayDurationClock.anchoredAt <= 0) {
+      return source;
+    }
+    return trayDurationClock.base + Math.floor(
+      Math.max(0, Date.now() - trayDurationClock.anchoredAt) / 1000,
+    );
+  }
+
+  function showTrayContextMenu() {
+    if (!tray) {
+      return;
+    }
+    const activeGameId = String(lastOfficialState.gameId || '');
+    const template = buildTrayMenuTemplate({
+      application: product,
+      client: {
+        ...lastOfficialState,
+        duration: currentTrayDuration(),
+        connected: Boolean(officialWindow && !officialWindow.isDestroyed()),
+        clientVersion: officialClientVersion,
       },
-      { label: '打开官方客户端界面', click: showOfficialWindow },
-      { type: 'separator' },
-      { label: '退出', click: () => cleanWindow?.close() },
-    ]));
+      activeGameTitle: trayGameTitles.get(activeGameId),
+      recentGames: trayRecentGames,
+      busy: autoStartBusy || autoPauseInProgress,
+      actions: {
+        show: showCleanWindow,
+        openSettings: showSettingsFromTray,
+        pauseTime: () => void pauseFromTray(),
+        resumeTime: () => void resumeFromTray(),
+        startGame: (gameId) => void startGameFromTray(gameId),
+        quit: quitFromTray,
+      },
+    });
+    tray.popUpContextMenu(Menu.buildFromTemplate(template));
+    void refreshTrayRecentGames();
   }
 
   function showCleanWindow() {
@@ -509,6 +598,25 @@ module.exports = function startLeigodClean(officialRequire) {
     cleanWindow.focus();
   }
 
+  function showSettingsFromTray() {
+    showCleanWindow();
+    if (!cleanWindow || cleanWindow.isDestroyed() || cleanWindow.webContents.isDestroyed()) {
+      return;
+    }
+    cleanWindow.webContents.send('leigod-clean:command', 'open-settings');
+  }
+
+  function quitFromTray() {
+    if (cleanWindow && !cleanWindow.isDestroyed()) {
+      cleanWindow.close();
+      return;
+    }
+    if (!closing) {
+      closing = true;
+      void closeApplication();
+    }
+  }
+
   async function pauseFromTray() {
     try {
       monitoredGameId = '';
@@ -520,6 +628,132 @@ module.exports = function startLeigodClean(officialRequire) {
         new Notification({ title: 'LeigodClean', body: messageOf(error), icon: appIcon }).show();
       }
     }
+  }
+
+  async function resumeFromTray() {
+    try {
+      const next = await bridge.call('resume');
+      acceptOfficialState(next);
+    } catch (error) {
+      notifyTrayFailure('恢复时长失败', error);
+    }
+  }
+
+  async function startGameFromTray(gameId) {
+    try {
+      const id = String(numericId(gameId));
+      const game = await getAutoGame(id);
+      rememberGameSummary(id, game.title);
+      await triggerAutoAcceleration(id, game, { notify: false });
+    } catch (error) {
+      notifyTrayFailure('开始加速失败', error);
+    }
+  }
+
+  function notifyTrayFailure(title, error) {
+    log(`Tray action failed: ${messageOf(error)}`);
+    if (Notification.isSupported()) {
+      new Notification({
+        title: `LeigodClean · ${title}`,
+        body: messageOf(error),
+        icon: appIcon,
+      }).show();
+    }
+  }
+
+  function rememberGameSummary(gameId, title) {
+    const id = String(gameId || '');
+    const value = String(title || '').trim();
+    if (!id || !value || trayGameTitles.get(id) === value) {
+      return;
+    }
+    trayGameTitles.set(id, value);
+    trayRecentGames = trayRecentGames.map((game) =>
+      String(game.id) === id ? { ...game, title: value } : game);
+    updateTrayStatus(id === String(lastOfficialState.gameId || ''));
+  }
+
+  function rememberRecentGame(gameId) {
+    const id = String(gameId || '');
+    if (!/^\d{1,12}$/u.test(id) || Number(id) <= 0) {
+      return;
+    }
+    const next = [id, ...settings.recentGameIds.filter((candidate) => candidate !== id)]
+      .slice(0, 20);
+    if (next.length === settings.recentGameIds.length &&
+      next.every((candidate, index) => candidate === settings.recentGameIds[index])) {
+      return;
+    }
+    settings.recentGameIds = next;
+    saveSettings();
+    void refreshTrayRecentGames();
+  }
+
+  function refreshTrayRecentGames() {
+    if (!lastOfficialState.ready) {
+      return Promise.resolve(trayRecentGames);
+    }
+    if (trayRecentGamesPromise) {
+      return trayRecentGamesPromise;
+    }
+    trayRecentGamesPromise = (async () => {
+      const officialRecent = await bridge.call('recentGames', { limit: 10 });
+      const officialById = new Map();
+      for (const game of Array.isArray(officialRecent) ? officialRecent : []) {
+        const id = String(game?.id || '');
+        const title = String(game?.title || '').trim();
+        if (id && title) {
+          officialById.set(id, { id, title });
+          rememberGameSummary(id, title);
+        }
+      }
+      const activeGameId = isAccelerationActive(lastOfficialState)
+        ? String(lastOfficialState.gameId || '')
+        : '';
+      const orderedIds = [];
+      const seen = new Set();
+      for (const value of [
+        activeGameId,
+        ...settings.recentGameIds,
+        ...officialById.keys(),
+      ]) {
+        const id = String(value || '');
+        if (id && !seen.has(id)) {
+          seen.add(id);
+          orderedIds.push(id);
+        }
+      }
+      const missingIds = orderedIds
+        .filter((id) => !trayGameTitles.has(id))
+        .slice(0, 6);
+      await Promise.all(missingIds.map(async (id) => {
+        try {
+          const game = await bridge.call('getGame', {
+            gameId: numericId(id),
+            liveProcesses: false,
+          });
+          rememberGameSummary(id, game.title);
+        } catch {
+          // A stale official recent entry is omitted from the menu.
+        }
+      }));
+      trayRecentGames = orderedIds
+        .map((id) => officialById.get(id) ?? (
+          trayGameTitles.has(id) ? { id, title: trayGameTitles.get(id) } : null
+        ))
+        .filter(Boolean)
+        .slice(0, 3);
+      updateTrayStatus(true);
+      return trayRecentGames;
+    })()
+      .catch((error) => {
+        log(`Tray recent games refresh failed: ${messageOf(error)}`);
+        return trayRecentGames;
+      })
+      .finally(() => {
+        trayRecentGamesPromise = null;
+      });
+    return trayRecentGamesPromise;
   }
 
   function configureLoginItem(enabled) {
@@ -566,14 +800,20 @@ module.exports = function startLeigodClean(officialRequire) {
       case 'initialize':
         await refreshOfficialState();
         return combinedState();
-      case 'searchGames':
-        return bridge.call('searchGames', {
+      case 'searchGames': {
+        const games = await bridge.call('searchGames', {
           query: String(payload.query ?? '').slice(0, 100),
           limit: Math.min(100, Math.max(1, Number(payload.limit) || 60)),
         });
+        for (const game of Array.isArray(games) ? games : []) {
+          rememberGameSummary(game.id, game.title);
+        }
+        return games;
+      }
       case 'getGame': {
         const gameId = numericId(payload.gameId);
         const game = await bridge.call('getGame', { gameId, liveProcesses: true });
+        rememberGameSummary(gameId, game.title);
         return { ...game, processes: resolveProcesses(gameId, game.processes) };
       }
       case 'getLines':
@@ -597,6 +837,7 @@ module.exports = function startLeigodClean(officialRequire) {
         if (result?.state) {
           acceptOfficialState(result.state);
         }
+        rememberRecentGame(payload.gameId);
         return combinedState();
       }
       case 'stopAcceleration': {
@@ -1198,11 +1439,12 @@ module.exports = function startLeigodClean(officialRequire) {
       areas: Array.isArray(game.areas) ? game.areas : [],
       liveProcessesLoaded: liveProcesses && game.liveProcessesResolved === true,
     };
+    rememberGameSummary(gameId, resolved.title);
     autoGameCache.set(gameId, resolved);
     return resolved;
   }
 
-  async function triggerAutoAcceleration(gameId, game) {
+  async function triggerAutoAcceleration(gameId, game, { notify = true } = {}) {
     const selection = settings.gameSelections[gameId] ?? defaultAutoSelection(game);
     if (!selection) {
       log(`Automatic acceleration skipped for game ${gameId}: no playable area`);
@@ -1223,9 +1465,10 @@ module.exports = function startLeigodClean(officialRequire) {
       if (result?.state) {
         acceptOfficialState(result.state);
       }
+      rememberRecentGame(gameId);
       if (result?.needsAttention) {
         showOfficialWindow();
-      } else if (settings.notificationsEnabled && Notification.isSupported()) {
+      } else if (notify && settings.notificationsEnabled && Notification.isSupported()) {
         new Notification({
           title: 'LeigodClean',
           body: `已检测到 ${game.title}，正在自动加速。`,
@@ -1317,6 +1560,8 @@ module.exports = function startLeigodClean(officialRequire) {
       return;
     }
     officialVisible = true;
+    officialWindow.webContents.setBackgroundThrottling?.(true);
+    officialWindow.webContents.setAudioMuted?.(false);
     officialWindow.setSkipTaskbar(false);
     officialWindow.show();
     officialWindow.focus();
@@ -1328,6 +1573,8 @@ module.exports = function startLeigodClean(officialRequire) {
       return;
     }
     officialVisible = false;
+    officialWindow.webContents.setBackgroundThrottling?.(true);
+    officialWindow.webContents.setAudioMuted?.(true);
     officialWindow.hide();
     officialWindow.setSkipTaskbar(true);
     sendState();
@@ -1405,12 +1652,17 @@ module.exports = function startLeigodClean(officialRequire) {
       return;
     }
     const previous = lastOfficialState;
+    synchronizeTrayDuration(previous, next);
     lastOfficialState = { ...next, ready: Boolean(next.ready) };
     if (lastOfficialState.ready) {
       cancelCompatibilityFallback();
     }
 
     const gameId = String(lastOfficialState.gameId || '');
+    if (gameId && isAccelerationActive(lastOfficialState) &&
+      (!isAccelerationActive(previous) || String(previous.gameId || '') !== gameId)) {
+      rememberRecentGame(gameId);
+    }
     if (gameId && lastOfficialState.accStatus !== 'normal' && monitoredGameId !== gameId) {
       void attachMonitor(gameId);
     } else if (monitoredGameId && lastOfficialState.accStatus === 'normal' &&
@@ -1426,6 +1678,7 @@ module.exports = function startLeigodClean(officialRequire) {
 
     if (lastOfficialState.ready && !previous.ready) {
       void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
+      void refreshTrayRecentGames();
     } else if (lastOfficialState.ready && settings.autoAccelerationEnabled && gameId &&
       !autoCandidateIds.map(String).includes(gameId)) {
       autoCandidateIds = [gameId, ...autoCandidateIds];
@@ -1437,6 +1690,9 @@ module.exports = function startLeigodClean(officialRequire) {
         String(previous.gameId || '') !== gameId)) {
       queueAutoEvaluation(resolveAutoGameIds(settings, autoCandidateIds));
     }
+    if (lastOfficialState.ready && String(previous.gameId || '') !== gameId) {
+      void refreshTrayRecentGames();
+    }
 
     if (JSON.stringify(previous) !== JSON.stringify(lastOfficialState)) {
       sendState();
@@ -1444,7 +1700,7 @@ module.exports = function startLeigodClean(officialRequire) {
   }
 
   function sendState() {
-    updateTrayMenu();
+    updateTrayStatus();
     if (!cleanWindow || cleanWindow.isDestroyed() || cleanWindow.webContents.isDestroyed()) {
       return;
     }
@@ -1494,6 +1750,7 @@ module.exports = function startLeigodClean(officialRequire) {
       autoAccelerateGames: { ...settings.autoAccelerateGames },
       gameSelections: cloneJson(settings.gameSelections),
       processOverrides: { ...settings.processOverrides },
+      recentGameIds: [...settings.recentGameIds],
     };
   }
 
@@ -1540,6 +1797,18 @@ module.exports = function startLeigodClean(officialRequire) {
         autoAccelerateGames[gameId] = true;
       }
     }
+    const recentGameIds = [];
+    const recentSeen = new Set();
+    for (const value of Array.isArray(value?.recentGameIds) ? value.recentGameIds.slice(0, 100) : []) {
+      const gameId = String(value ?? '');
+      if (/^\d{1,12}$/u.test(gameId) && Number(gameId) > 0 && !recentSeen.has(gameId)) {
+        recentSeen.add(gameId);
+        recentGameIds.push(gameId);
+      }
+      if (recentGameIds.length >= 20) {
+        break;
+      }
+    }
     return {
       autoAccelerationEnabled: value?.autoAccelerationEnabled === true,
       autoPauseEnabled: value?.autoPauseEnabled !== false,
@@ -1552,6 +1821,7 @@ module.exports = function startLeigodClean(officialRequire) {
       autoAccelerateGames,
       gameSelections,
       processOverrides,
+      recentGameIds,
     };
   }
 

@@ -1257,15 +1257,18 @@ svg {
 }
 
 .telemetry-focus {
-  display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
-  align-items: center;
-  gap: 13px;
   margin-top: 20px;
   padding: 16px;
   background: linear-gradient(135deg, #f3f8ff, #f7f7f9 72%);
   border: 1px solid rgba(8, 120, 249, .09);
   border-radius: 14px;
+}
+
+.telemetry-summary {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
 }
 
 .telemetry-focus-icon {
@@ -1310,6 +1313,83 @@ svg {
   letter-spacing: -.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.telemetry-chart {
+  margin-top: 13px;
+  padding-top: 11px;
+  border-top: 1px solid rgba(8, 120, 249, .09);
+}
+
+.telemetry-chart-toolbar,
+.telemetry-axis {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.telemetry-chart-toolbar > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 8.8px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.telemetry-range {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(0, 0, 0, .045);
+  border-radius: 7px;
+}
+
+.telemetry-range button {
+  min-width: 34px;
+  height: 22px;
+  padding: 0 6px;
+  color: var(--muted);
+  border-radius: 5px;
+  font-size: 8px;
+  font-weight: 620;
+}
+
+.telemetry-range button:hover {
+  color: var(--ink);
+}
+
+.telemetry-range button.selected {
+  color: var(--accent);
+  background: white;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .08);
+}
+
+.telemetry-canvas-wrap {
+  position: relative;
+  height: 96px;
+  margin-top: 7px;
+}
+
+.telemetry-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 96px;
+}
+
+.telemetry-chart-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.telemetry-axis {
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: 7.5px;
 }
 
 .telemetry-focus-copy span {
@@ -1550,7 +1630,7 @@ svg {
 }
 
 .settings-dialog {
-  width: min(500px, calc(100vw - 40px));
+  width: min(820px, calc(100vw - 40px));
   max-height: calc(100vh - 40px);
   padding: 0;
   overflow: hidden;
@@ -1567,8 +1647,10 @@ svg {
 }
 
 .settings-dialog form {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   max-height: calc(100vh - 40px);
-  overflow: auto;
+  overflow: hidden;
 }
 
 .about-dialog {
@@ -1578,6 +1660,21 @@ svg {
 .about-content {
   max-height: calc(100vh - 40px);
   overflow: auto;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 0;
+  overflow: auto;
+}
+
+.settings-column {
+  min-width: 0;
+}
+
+.settings-column + .settings-column {
+  border-left: 1px solid var(--line);
 }
 
 .about-hero {
@@ -1693,7 +1790,7 @@ svg {
 }
 
 .dialog-section {
-  padding: 18px 22px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1711,7 +1808,8 @@ svg {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 10px 0;
+  min-height: 50px;
+  padding: 8px 0;
 }
 
 .settings-row label strong,
@@ -1821,7 +1919,7 @@ svg {
 .process-editor textarea {
   width: 100%;
   padding: 10px 11px;
-  resize: vertical;
+  resize: none;
   color: var(--ink);
   line-height: 1.55;
   background: #f3f3f5;
@@ -1850,7 +1948,7 @@ svg {
 .dialog-tools {
   display: flex;
   gap: 16px;
-  padding: 13px 22px 0;
+  padding: 12px 20px 0;
 }
 
 .official-fallback {
@@ -1858,7 +1956,7 @@ svg {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  margin: 14px 22px 0;
+  margin: 12px 20px 0;
   padding: 13px 14px;
   background: #f4f4f6;
   border-radius: 11px;
@@ -1983,6 +2081,12 @@ svg {
     width: 100%;
   }
   .workspace-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  .settings-dialog form { overflow: auto; }
+  .settings-layout { display: block; overflow: visible; }
+  .settings-column + .settings-column { border-left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

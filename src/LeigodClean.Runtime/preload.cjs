@@ -31,4 +31,12 @@ contextBridge.exposeInMainWorld('leigodClean', Object.freeze({
     ipcRenderer.on('leigod-clean:state', listener);
     return () => ipcRenderer.removeListener('leigod-clean:state', listener);
   },
+  onCommand(callback) {
+    if (typeof callback !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, command) => callback(String(command ?? ''));
+    ipcRenderer.on('leigod-clean:command', listener);
+    return () => ipcRenderer.removeListener('leigod-clean:command', listener);
+  },
 }));

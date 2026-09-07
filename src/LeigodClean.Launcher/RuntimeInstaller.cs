@@ -14,6 +14,7 @@ internal static class RuntimeInstaller
         "monitor.cjs",
         "process-events.cjs",
         "official-tray.cjs",
+        "tray.cjs",
         "official-bridge.cjs",
         "preload.cjs",
         "community-processes.json",
@@ -21,9 +22,11 @@ internal static class RuntimeInstaller
         "renderer/index.html",
         "renderer/styles.css",
         "renderer/view-state.js",
+        "renderer/telemetry.js",
         "renderer/app.js",
         "assets/leigodclean.svg",
         "assets/leigodclean.png",
+        "assets/leigodclean.ico",
     ];
 
     internal static string RuntimeRoot(string installRoot) => Path.Combine(

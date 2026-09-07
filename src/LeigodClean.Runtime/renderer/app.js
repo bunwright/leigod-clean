@@ -2,6 +2,7 @@
 
 const api = window.leigodClean;
 const viewState = window.leigodCleanViewState;
+const telemetry = window.leigodCleanTelemetry;
 const model = {
   state: null,
   settings: null,
@@ -21,6 +22,11 @@ const model = {
   monitorClockTimer: null,
   durationClockTimer: null,
   durationClock: { gameId: '', source: 0, base: 0, anchoredAt: 0 },
+  telemetryRangeMs: telemetry.RANGES.fiveMinutes,
+  telemetrySeries: { delay: [], loss: [] },
+  telemetrySessionId: '',
+  telemetrySampleTimer: null,
+  telemetryFrame: null,
 };
 
 const elements = Object.fromEntries([...document.querySelectorAll('[id]')].map((element) => [element.id, element]));
@@ -92,6 +98,7 @@ function applyState(next) {
   const previousClient = model.state?.client ?? {};
   synchronizeDurationClock(previousClient, next.client ?? {});
   model.state = next;
+  synchronizeTelemetrySession(next.client ?? {});
   model.settings = next.settings ?? model.settings;
   const client = next.client ?? {};
   const connected = Boolean(client.connected && client.ready);
@@ -670,6 +677,14 @@ function renderTelemetryFocus(acceleration = viewState.accelerationContext(
     option.setAttribute('aria-selected', active ? 'true' : 'false');
     option.tabIndex = active ? 0 : -1;
   }
+  const chartVisible = model.selectedMetric !== 'duration';
+  elements.telemetryFocus.classList.toggle('charting', chartVisible);
+  elements.telemetryChart.hidden = !chartVisible;
+  if (chartVisible) {
+    scheduleTelemetrySampling(acceleration);
+  } else {
+    clearTelemetrySampling();
+  }
 }
 
 function selectTelemetryMetric(metric, focus = false) {
@@ -680,6 +695,180 @@ function selectTelemetryMetric(metric, focus = false) {
   renderTelemetryFocus();
   if (focus) {
     elements.metricSwitcher.querySelector(`[data-metric="${metric}"]`)?.focus();
+  }
+}
+
+function synchronizeTelemetrySession(client) {
+  const acceleration = viewState.accelerationContext(client);
+  const sessionId = acceleration.activeGameId || '';
+  if (sessionId === model.telemetrySessionId) {
+    return;
+  }
+  model.telemetrySessionId = sessionId;
+  model.telemetrySeries = { delay: [], loss: [] };
+  clearTelemetrySampling();
+}
+
+function telemetryCanSample(acceleration = viewState.accelerationContext(
+  model.state?.client ?? {},
+  model.selectedGame?.id,
+)) {
+  return model.selectedMetric !== 'duration' &&
+    acceleration.selectedIsActive &&
+    document.hidden === false &&
+    !elements.settingsDialog.open &&
+    !elements.aboutDialog.open;
+}
+
+function scheduleTelemetrySampling(acceleration) {
+  clearTelemetrySampleTimer();
+  if (!telemetryCanSample(acceleration)) {
+    drawTelemetryChart();
+    return;
+  }
+  captureTelemetrySamples();
+  model.telemetrySampleTimer = setTimeout(() => {
+    model.telemetrySampleTimer = null;
+    const current = viewState.accelerationContext(
+      model.state?.client ?? {},
+      model.selectedGame?.id,
+    );
+    if (telemetryCanSample(current)) {
+      scheduleTelemetrySampling(current);
+    }
+  }, 2_000);
+}
+
+function captureTelemetrySamples() {
+  const client = model.state?.client ?? {};
+  const acceleration = viewState.accelerationContext(client, model.selectedGame?.id);
+  if (!acceleration.selectedIsActive) {
+    return;
+  }
+  const now = Date.now();
+  const delay = Number(client.delay);
+  const loss = Number(client.loss);
+  if (Number.isFinite(delay) && delay > 0) {
+    telemetry.appendSample(model.telemetrySeries.delay, { at: now, value: delay });
+  }
+  if (Number.isFinite(loss) && loss >= 0) {
+    telemetry.appendSample(model.telemetrySeries.loss, { at: now, value: loss });
+  }
+  drawTelemetryChart();
+}
+
+function drawTelemetryChart() {
+  if (model.selectedMetric === 'duration' || elements.telemetryChart.hidden || document.hidden) {
+    return;
+  }
+  if (model.telemetryFrame !== null) {
+    cancelAnimationFrame(model.telemetryFrame);
+  }
+  model.telemetryFrame = requestAnimationFrame(() => {
+    model.telemetryFrame = null;
+    if (elements.telemetryChart.hidden || document.hidden) {
+      return;
+    }
+    const canvas = elements.telemetryCanvas;
+    const width = Math.max(1, Math.floor(canvas.clientWidth));
+    const height = Math.max(1, Math.floor(canvas.clientHeight));
+    const pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const bitmapWidth = Math.floor(width * pixelRatio);
+    const bitmapHeight = Math.floor(height * pixelRatio);
+    if (canvas.width !== bitmapWidth || canvas.height !== bitmapHeight) {
+      canvas.width = bitmapWidth;
+      canvas.height = bitmapHeight;
+    }
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return;
+    }
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.clearRect(0, 0, width, height);
+    context.strokeStyle = 'rgba(8, 120, 249, 0.09)';
+    context.lineWidth = 1;
+    for (let index = 1; index <= 3; index += 1) {
+      const y = Math.round((height / 4) * index) + 0.5;
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(width, y);
+      context.stroke();
+    }
+
+    const metric = model.selectedMetric === 'loss' ? 'loss' : 'delay';
+    const series = model.telemetrySeries[metric];
+    const chart = telemetry.createChartModel(series, {
+      metric,
+      now: Date.now(),
+      rangeMs: model.telemetryRangeMs,
+      width: Math.max(1, width - 4),
+      height: Math.max(1, height - 8),
+    });
+    const unit = metric === 'delay' ? 'ms' : '%';
+    elements.telemetryChartEmpty.hidden = chart.points.length > 0;
+    elements.telemetryRangeStart.textContent = `${Math.round(model.telemetryRangeMs / 60_000)} 分钟前`;
+    if (!chart.summary) {
+      elements.telemetryChartStats.textContent = '等待采样';
+      canvas.setAttribute('aria-label', `${metric === 'delay' ? '线路延迟' : '线路丢包'}，等待数据`);
+      return;
+    }
+
+    const roundValue = (value) => metric === 'delay'
+      ? Math.round(value)
+      : Math.round(value * 10) / 10;
+    elements.telemetryChartStats.textContent =
+      `平均 ${roundValue(chart.summary.average)} ${unit} · 峰值 ${roundValue(chart.summary.maximum)} ${unit}`;
+    canvas.setAttribute(
+      'aria-label',
+      `${metric === 'delay' ? '线路延迟' : '线路丢包'}，当前 ${roundValue(chart.summary.current)} ${unit}，平均 ${roundValue(chart.summary.average)} ${unit}`,
+    );
+
+    const points = chart.points.map((point) => ({ x: point.x + 2, y: point.y + 4 }));
+    const color = metric === 'delay' ? '#0878f9' : '#28a76f';
+    const fill = context.createLinearGradient(0, 0, 0, height);
+    fill.addColorStop(0, metric === 'delay' ? 'rgba(8, 120, 249, 0.22)' : 'rgba(40, 167, 111, 0.22)');
+    fill.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    if (points.length > 1) {
+      context.beginPath();
+      context.moveTo(points[0].x, height);
+      for (const point of points) {
+        context.lineTo(point.x, point.y);
+      }
+      context.lineTo(points.at(-1).x, height);
+      context.closePath();
+      context.fillStyle = fill;
+      context.fill();
+    }
+    context.beginPath();
+    context.moveTo(points[0].x, points[0].y);
+    for (const point of points.slice(1)) {
+      context.lineTo(point.x, point.y);
+    }
+    context.strokeStyle = color;
+    context.lineWidth = 2;
+    context.lineJoin = 'round';
+    context.lineCap = 'round';
+    context.stroke();
+    const latest = points.at(-1);
+    context.beginPath();
+    context.arc(latest.x, latest.y, 2.5, 0, Math.PI * 2);
+    context.fillStyle = color;
+    context.fill();
+  });
+}
+
+function clearTelemetrySampleTimer() {
+  if (model.telemetrySampleTimer) {
+    clearTimeout(model.telemetrySampleTimer);
+    model.telemetrySampleTimer = null;
+  }
+}
+
+function clearTelemetrySampling() {
+  clearTelemetrySampleTimer();
+  if (model.telemetryFrame !== null) {
+    cancelAnimationFrame(model.telemetryFrame);
+    model.telemetryFrame = null;
   }
 }
 
@@ -1088,6 +1277,7 @@ function syncModalPresentation() {
   if (open) {
     clearDurationClockTimer();
     clearMonitorClockTimer();
+    clearTelemetrySampling();
   } else if (model.selectedGame) {
     renderSession();
   }
@@ -1107,6 +1297,7 @@ function openSettings() {
     autoAccelerateGames: {},
     gameSelections: {},
     processOverrides: {},
+    recentGameIds: [],
   };
   elements.autoAccelerationInput.checked = settings.autoAccelerationEnabled === true;
   elements.autoPauseInput.checked = settings.autoPauseEnabled !== false;
@@ -1148,6 +1339,7 @@ async function saveSettings(event) {
       autoAccelerateGames: { ...(model.settings?.autoAccelerateGames ?? {}) },
       gameSelections: { ...(model.settings?.gameSelections ?? {}) },
       processOverrides: { ...(model.settings?.processOverrides ?? {}) },
+      recentGameIds: [...(model.settings?.recentGameIds ?? [])],
     };
     if (model.selectedGame) {
       const gameId = String(model.selectedGame.id);
@@ -1338,6 +1530,18 @@ elements.metricSwitcher.addEventListener('keydown', (event) => {
   event.preventDefault();
   selectTelemetryMetric(order[next], true);
 });
+elements.telemetryRange.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-range]');
+  const range = Number(button?.dataset.range);
+  if (!button || !Object.values(telemetry.RANGES).includes(range)) {
+    return;
+  }
+  model.telemetryRangeMs = range;
+  for (const option of elements.telemetryRange.querySelectorAll('[data-range]')) {
+    option.classList.toggle('selected', option === button);
+  }
+  drawTelemetryChart();
+});
 elements.timeToggleButton.addEventListener('click', () => void toggleTime());
 elements.accountButton.addEventListener('click', () => {
   if (model.state?.client?.isLogin) {
@@ -1364,10 +1568,12 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     clearDurationClockTimer();
     clearMonitorClockTimer();
+    clearTelemetrySampling();
   } else if (model.selectedGame) {
     renderSession();
   }
 });
+window.addEventListener('resize', () => drawTelemetryChart());
 elements.openLogsButton.addEventListener('click', async () => {
   try {
     unwrap(await api.openLogs());
@@ -1401,6 +1607,11 @@ api.onState((state) => {
   } else if (!wasLogin && state.client?.isLogin && model.selectedGame) {
     showCenterState('workspace');
     void loadLines(false);
+  }
+});
+api.onCommand((command) => {
+  if (command === 'open-settings') {
+    openSettings();
   }
 });
 

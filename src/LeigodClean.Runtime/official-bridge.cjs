@@ -445,6 +445,29 @@ function installOfficialBridge(rankCatalog) {
       .slice(0, 500);
   }
 
+  async function recentGames(payload = {}) {
+    await loadGames();
+    await refreshGamePriorities().catch(() => {});
+    const activeGameId = toNumber(findPinia()?._s.get('acc')?.accInfo?.game_id, 0);
+    const limit = Math.min(10, Math.max(1, toNumber(payload.limit, 3)));
+    return uniqueGameIds([
+      activeGameId,
+      ...runtime.sessionRecentGameIds,
+      ...runtime.recentGameIds,
+    ])
+      .map((gameId) => runtime.gameById.get(String(gameId)))
+      .filter(Boolean)
+      .slice(0, limit)
+      .map((game) => {
+        const normalized = normalizeGame(game);
+        return {
+          id: normalized.id,
+          title: normalized.title,
+          image: normalized.image,
+        };
+      });
+  }
+
   async function getGame(payload = {}) {
     const game = await getRawGame(payload.gameId);
     if (!game) {
@@ -865,6 +888,7 @@ function installOfficialBridge(rankCatalog) {
     getGame,
     getLines,
     pause,
+    recentGames,
     resume,
     searchGames,
     start,

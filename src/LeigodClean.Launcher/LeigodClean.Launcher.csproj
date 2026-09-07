@@ -5,7 +5,7 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <AssemblyName>LeigodClean</AssemblyName>
     <RootNamespace>LeigodClean</RootNamespace>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <Authors>bunwright</Authors>
     <Product>LeigodClean</Product>
     <Description>Focused desktop interface and process-aware automation for Leigod on Windows.</Description>
@@ -36,6 +36,7 @@
     <EmbeddedResource Include="..\LeigodClean.Runtime\monitor.cjs" LogicalName="Runtime/monitor.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\process-events.cjs" LogicalName="Runtime/process-events.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\official-tray.cjs" LogicalName="Runtime/official-tray.cjs" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\tray.cjs" LogicalName="Runtime/tray.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\official-bridge.cjs" LogicalName="Runtime/official-bridge.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\preload.cjs" LogicalName="Runtime/preload.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\community-processes.json" LogicalName="Runtime/community-processes.json" />
@@ -43,9 +44,11 @@
     <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\index.html" LogicalName="Runtime/renderer/index.html" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\styles.css" LogicalName="Runtime/renderer/styles.css" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\view-state.js" LogicalName="Runtime/renderer/view-state.js" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\telemetry.js" LogicalName="Runtime/renderer/telemetry.js" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\renderer\app.js" LogicalName="Runtime/renderer/app.js" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\assets\leigodclean.svg" LogicalName="Runtime/assets/leigodclean.svg" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\assets\leigodclean.png" LogicalName="Runtime/assets/leigodclean.png" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\assets\leigodclean.ico" LogicalName="Runtime/assets/leigodclean.ico" />
     <EmbeddedResource Include="..\LeigodClean.ProcessObserver\bin\$(Configuration)\net472\LeigodClean.ProcessObserver.exe"
                       LogicalName="Runtime/process-observer.exe" />
   </ItemGroup>
