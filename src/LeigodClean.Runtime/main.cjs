@@ -418,7 +418,7 @@ module.exports = function startLeigodClean(officialRequire) {
         title: 'LeigodClean',
         icon: appIcon,
         width: 1120,
-        height: 800,
+        height: 840,
         minWidth: 920,
         minHeight: 700,
         center: true,

@@ -4,6 +4,12 @@
 
 ## [未发布]
 
+## [0.6.1] - 2026-09-10
+
+### 改进
+
+- 将普通模式默认窗口高度调整为 840 像素，使主卡片在常见桌面尺寸下获得更舒适的显示空间。
+
 ## [0.6.0] - 2026-09-10
 
 ### 新增
@@ -163,7 +169,8 @@
 - 支持系统托盘、开机启动、官方界面回退入口及自动维护客户端入口补丁。
 - 建立 Windows 单文件构建、测试、校验和 GitHub Release 流程。
 
-[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.6.0...HEAD
+[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/bunwright/leigod-clean/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/bunwright/leigod-clean/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/bunwright/leigod-clean/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/bunwright/leigod-clean/compare/v0.4.2...v0.4.3

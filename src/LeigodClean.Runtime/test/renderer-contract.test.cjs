@@ -64,7 +64,7 @@ test('clean loading window is registered before the official runtime and officia
   assert.doesNotMatch(mainRuntime, /showing the official interface/u);
   assert.match(mainRuntime, /Clean renderer failed to load/u);
   assert.match(mainRuntime, /Clean renderer exited unexpectedly/u);
-  assert.match(mainRuntime, /width:\s*1120,[\s\S]{0,80}?height:\s*800,[\s\S]{0,80}?minHeight:\s*700/u);
+  assert.match(mainRuntime, /width:\s*1120,[\s\S]{0,80}?height:\s*840,[\s\S]{0,80}?minHeight:\s*700/u);
   assert.match(mainRuntime, /officialVisible = true;\s*showOfficialWindow\(\)/u);
   assert.doesNotMatch(html, /正在准备|尚未就绪|继续自动连接|正在连接|等待官方客户端/u);
   assert.match(html, /id="loadingState"[^>]*role="status"[^>]*aria-label="正在加载"/u);
