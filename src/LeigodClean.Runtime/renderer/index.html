@@ -189,12 +189,32 @@
                   <span class="monitor-chip" id="monitorChip">空闲</span>
                 </div>
 
+                <div class="metric-switcher" id="metricSwitcher" role="tablist" aria-label="运行指标">
+                  <button class="metric-option selected" data-metric="duration" type="button" role="tab" aria-selected="true">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                    <span><small>时长</small><strong id="durationMetric">—</strong></span>
+                  </button>
+                  <button class="metric-option" data-metric="delay" type="button" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14a8 8 0 0 1 16 0M7 17a5 5 0 0 1 10 0M10 20a2 2 0 0 1 4 0"/></svg>
+                    <span><small>延迟</small><strong id="delayMetric">—</strong></span>
+                  </button>
+                  <button class="metric-option" data-metric="loss" type="button" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h3l2-5 4 10 2-5h5"/></svg>
+                    <span><small>丢包</small><strong id="lossMetric">—</strong></span>
+                  </button>
+                  <button class="metric-option" data-metric="traffic" type="button" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v13m0 0-3-3m3 3 3-3M16 20V7m0 0-3 3m3-3 3 3"/></svg>
+                    <span><small>流量</small><strong id="trafficMetric">—</strong></span>
+                  </button>
+                </div>
+
                 <div class="telemetry-focus" id="telemetryFocus">
                   <div class="telemetry-summary" aria-live="polite">
                     <span class="telemetry-focus-icon" aria-hidden="true">
                       <svg id="telemetryDurationIcon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
                       <svg id="telemetryDelayIcon" viewBox="0 0 24 24" hidden><path d="M4 14a8 8 0 0 1 16 0M7 17a5 5 0 0 1 10 0M10 20a2 2 0 0 1 4 0"/></svg>
                       <svg id="telemetryLossIcon" viewBox="0 0 24 24" hidden><path d="M4 12h3l2-5 4 10 2-5h5"/><path d="m17 5 3 3m0-3-3 3"/></svg>
+                      <svg id="telemetryTrafficIcon" viewBox="0 0 24 24" hidden><path d="M8 4v13m0 0-3-3m3 3 3-3M16 20V7m0 0-3 3m3-3 3 3"/></svg>
                     </span>
                     <span class="telemetry-focus-copy">
                       <small id="telemetryLabel">加速时长</small>
@@ -217,21 +237,6 @@
                     </div>
                     <div class="telemetry-axis"><span id="telemetryRangeStart">5 分钟前</span><span>现在</span></div>
                   </div>
-                </div>
-
-                <div class="metric-switcher" id="metricSwitcher" role="tablist" aria-label="运行指标">
-                  <button class="metric-option selected" data-metric="duration" type="button" role="tab" aria-selected="true">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                    <span><small>时长</small><strong id="durationMetric">—</strong></span>
-                  </button>
-                  <button class="metric-option" data-metric="delay" type="button" role="tab" aria-selected="false">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14a8 8 0 0 1 16 0M7 17a5 5 0 0 1 10 0M10 20a2 2 0 0 1 4 0"/></svg>
-                    <span><small>延迟</small><strong id="delayMetric">—</strong></span>
-                  </button>
-                  <button class="metric-option" data-metric="loss" type="button" role="tab" aria-selected="false">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h3l2-5 4 10 2-5h5"/></svg>
-                    <span><small>丢包</small><strong id="lossMetric">—</strong></span>
-                  </button>
                 </div>
 
                 <div class="monitor-detail">
@@ -327,6 +332,13 @@
                   <small>游戏进程结束后自动停止加速并暂停时长</small>
                 </label>
                 <label class="switch"><input id="autoPauseInput" type="checkbox"><span></span></label>
+              </div>
+              <div class="settings-row switch-row">
+                <label for="pauseTimeWhenIdleInput">
+                  <strong>空闲时保持时长暂停</strong>
+                  <small>没有游戏正在加速时自动暂停账户时长</small>
+                </label>
+                <label class="switch"><input id="pauseTimeWhenIdleInput" type="checkbox"><span></span></label>
               </div>
               <div class="settings-row switch-row">
                 <label for="launchAtLoginInput">

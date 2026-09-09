@@ -27,6 +27,7 @@ module.exports = function startLeigodClean(officialRequire) {
     completeAutoWatchAttempt,
     defaultAutoSelection,
     evaluateAutoWatchState,
+    GameLifecycleTracker,
     resolveAutoGameIds,
     selectAutoEventGames,
   } = require('./auto-acceleration.cjs');
@@ -67,6 +68,8 @@ module.exports = function startLeigodClean(officialRequire) {
     description: '面向 Windows 的简洁雷神加速控制界面。',
   });
   const startedAt = new Date().toISOString();
+  const windowsAppUserModelId = 'io.github.bunwright.leigodclean';
+  const toastActivatorClsid = '{3B929AF8-6AA0-4BB3-9F10-03B4C11F92B7}';
   const officialClientVersion = readText(
     path.join(path.dirname(process.resourcesPath), 'version_f.txt'),
     'unknown',
@@ -75,12 +78,13 @@ module.exports = function startLeigodClean(officialRequire) {
   const defaults = Object.freeze({
     autoAccelerationEnabled: false,
     autoPauseEnabled: true,
+    pauseTimeWhenIdle: true,
     launchAtLogin: false,
     minimizeToTray: true,
     pauseOnClose: true,
     notificationsEnabled: true,
-    startupTimeoutMinutes: 15,
-    graceMinutes: 10,
+    startupTimeoutMinutes: 10,
+    graceMinutes: 5,
     autoAccelerateGames: {},
     gameSelections: {},
     processOverrides: {},
@@ -113,6 +117,9 @@ module.exports = function startLeigodClean(officialRequire) {
   let pendingStartUntil = 0;
   let monitoredGameId = '';
   let autoPauseInProgress = false;
+  let idlePauseInProgress = false;
+  let idlePauseScheduled = false;
+  let idlePauseManualOverride = false;
   let autoStartBusy = false;
   let autoCandidateIds = [];
   let autoCandidatesLoadedAt = 0;
@@ -127,9 +134,15 @@ module.exports = function startLeigodClean(officialRequire) {
   const autoRetryTimers = new Map();
   const pendingAutoStartEvents = [];
   let autoIndexRefreshTimer = null;
+  const gameLifecycleTracker = new GameLifecycleTracker({
+    isRunning: (gameId, game) => isAutoGameRunning(gameId, game),
+    onStarted: (_gameId, game) => notifyGameLifecycle(game, 'started'),
+    onStopped: (_gameId, game) => notifyGameLifecycle(game, 'stopped'),
+  });
   const autoEvaluationQueue = new AutoEvaluationQueue({
     getOrder: () => resolveAutoGameIds(settings, autoCandidateIds),
-    evaluate: (gameId, allowSwitch) => evaluateAutoGame(gameId, allowSwitch),
+    evaluate: (gameId, allowSwitch, lifecycleKind) =>
+      evaluateAutoGame(gameId, allowSwitch, lifecycleKind),
     canContinue: () => !closing,
     onError: (error) => log(`Automatic acceleration queue failed: ${messageOf(error)}`),
   });
@@ -151,8 +164,9 @@ module.exports = function startLeigodClean(officialRequire) {
   });
 
   appIcon = loadApplicationIcon();
-  if (process.platform === 'win32' && typeof app.setAppUserModelId === 'function') {
-    app.setAppUserModelId('io.github.bunwright.leigodclean');
+  if (process.platform === 'win32') {
+    app.setAppUserModelId?.(windowsAppUserModelId);
+    app.setToastActivatorCLSID?.(toastActivatorClsid);
   }
 
   prepareLog();
@@ -212,6 +226,7 @@ module.exports = function startLeigodClean(officialRequire) {
 
   app.whenReady().then(() => {
     log('Electron application ready');
+    registerNotificationIdentity();
     registerCleanIpc();
     try {
       createTray();
@@ -612,6 +627,7 @@ module.exports = function startLeigodClean(officialRequire) {
 
   async function pauseFromTray() {
     try {
+      idlePauseManualOverride = false;
       monitoredGameId = '';
       monitor.stop('manual-pause');
       await performPause('manual-pause');
@@ -624,16 +640,20 @@ module.exports = function startLeigodClean(officialRequire) {
   }
 
   async function resumeFromTray() {
+    const previousOverride = idlePauseManualOverride;
     try {
       const next = await bridge.call('resume');
+      idlePauseManualOverride = true;
       acceptOfficialState(next);
     } catch (error) {
+      idlePauseManualOverride = previousOverride;
       notifyTrayFailure('恢复时长失败', error);
     }
   }
 
   async function startGameFromTray(gameId) {
     try {
+      idlePauseManualOverride = false;
       const id = String(numericId(gameId));
       const game = await getAutoGame(id);
       rememberGameSummary(id, game.title);
@@ -645,13 +665,15 @@ module.exports = function startLeigodClean(officialRequire) {
 
   function notifyTrayFailure(title, error) {
     log(`Tray action failed: ${messageOf(error)}`);
-    if (Notification.isSupported()) {
-      new Notification({
-        title: `LeigodClean · ${title}`,
-        body: messageOf(error),
-        icon: appIcon,
-      }).show();
+    showSystemNotification(messageOf(error), { title: `LeigodClean · ${title}`, silent: false });
+  }
+
+  function showSystemNotification(body, { title = 'LeigodClean', silent = true } = {}) {
+    if (!settings.notificationsEnabled || !Notification.isSupported?.()) {
+      return false;
     }
+    new Notification({ title, body, icon: appIcon, silent }).show();
+    return true;
   }
 
   function rememberGameSummary(gameId, title) {
@@ -750,12 +772,7 @@ module.exports = function startLeigodClean(officialRequire) {
   }
 
   function configureLoginItem(enabled) {
-    let launcherPath = '';
-    try {
-      launcherPath = fs.readFileSync(launcherPathFile, 'utf8').trim();
-    } catch {
-      // The launcher writes this file before starting the official client.
-    }
+    const launcherPath = readLauncherPath();
     if (!launcherPath || (enabled && !fs.existsSync(launcherPath))) {
       if (enabled) {
         const error = new Error('无法定位 LeigodClean.exe，暂不能设置开机启动。');
@@ -770,6 +787,51 @@ module.exports = function startLeigodClean(officialRequire) {
       args: ['--background'],
       name: 'LeigodClean',
     });
+  }
+
+  function readLauncherPath() {
+    try {
+      return fs.readFileSync(launcherPathFile, 'utf8').trim();
+    } catch {
+      // The launcher writes this file before starting the official client.
+      return '';
+    }
+  }
+
+  function registerNotificationIdentity() {
+    if (process.platform !== 'win32' || typeof shell.writeShortcutLink !== 'function') {
+      return;
+    }
+    const launcherPath = readLauncherPath();
+    const roamingAppData = String(process.env.APPDATA ?? '').trim();
+    if (!launcherPath || !roamingAppData || !fs.existsSync(launcherPath)) {
+      log('Windows notification identity registration skipped: launcher unavailable');
+      return;
+    }
+    try {
+      const shortcutPath = path.join(
+        roamingAppData,
+        'Microsoft',
+        'Windows',
+        'Start Menu',
+        'Programs',
+        'LeigodClean.lnk',
+      );
+      const registered = shell.writeShortcutLink(shortcutPath, 'create', {
+        target: launcherPath,
+        cwd: path.dirname(launcherPath),
+        description: 'LeigodClean',
+        icon: launcherPath,
+        iconIndex: 0,
+        appUserModelId: windowsAppUserModelId,
+        toastActivatorClsid,
+      });
+      log(registered
+        ? 'Windows notification identity registered as LeigodClean'
+        : 'Windows notification identity registration was rejected');
+    } catch (error) {
+      log(`Windows notification identity registration failed: ${messageOf(error)}`);
+    }
   }
 
   function registerCleanIpc() {
@@ -819,6 +881,7 @@ module.exports = function startLeigodClean(officialRequire) {
           refresh: Boolean(payload.refresh),
         });
       case 'start': {
+        idlePauseManualOverride = false;
         pendingStartUntil = Date.now() + 30000;
         const result = await bridge.call('start', {
           gameId: numericId(payload.gameId),
@@ -843,13 +906,21 @@ module.exports = function startLeigodClean(officialRequire) {
         return combinedState();
       }
       case 'pauseTime':
+        idlePauseManualOverride = false;
         monitoredGameId = '';
         monitor.stop('manual-pause');
         return performPause('manual-pause');
       case 'resumeTime': {
-        const next = await bridge.call('resume');
-        acceptOfficialState(next);
-        return combinedState();
+        const previousOverride = idlePauseManualOverride;
+        try {
+          const next = await bridge.call('resume');
+          idlePauseManualOverride = true;
+          acceptOfficialState(next);
+          return combinedState();
+        } catch (error) {
+          idlePauseManualOverride = previousOverride;
+          throw error;
+        }
       }
       case 'showOfficial':
         showOfficialWindow();
@@ -864,10 +935,15 @@ module.exports = function startLeigodClean(officialRequire) {
       case 'updateSettings':
         {
           const nextSettings = validateSettings(payload);
+          const pauseTimeWhenIdleChanged =
+            nextSettings.pauseTimeWhenIdle !== settings.pauseTimeWhenIdle;
           if (nextSettings.launchAtLogin !== settings.launchAtLogin) {
             configureLoginItem(nextSettings.launchAtLogin);
           }
           settings = nextSettings;
+          if (pauseTimeWhenIdleChanged) {
+            idlePauseManualOverride = false;
+          }
         }
         saveSettings();
         resetAutoAccelerationIndex(true);
@@ -879,6 +955,7 @@ module.exports = function startLeigodClean(officialRequire) {
         } else if (monitoredGameId && monitor.snapshot.state === STATES.MISSING) {
           await attachMonitor(monitoredGameId, true);
         }
+        scheduleIdleTimePause();
         return publicSettings();
       case 'setGameAutoAcceleration': {
         const gameId = String(numericId(payload.gameId));
@@ -1079,14 +1156,17 @@ module.exports = function startLeigodClean(officialRequire) {
     if (kind === 'started' && matched.activeHandoff) {
       // Launcher-to-game handoffs often share process aliases with regional catalog
       // entries. A process belonging to the active game must not switch variants.
-      queueAutoEvaluation(matched.gameIds);
+      queueAutoEvaluation(matched.gameIds, { lifecycleKind: 'started' });
       return;
     }
     if (gameIds.size > 0) {
       if (kind === 'started') {
         log(`Automatic process start matched game(s): ${[...gameIds].join(', ')}`);
       }
-      queueAutoEvaluation(gameIds, { allowSwitch: kind === 'started' });
+      queueAutoEvaluation(gameIds, {
+        allowSwitch: kind === 'started',
+        lifecycleKind: kind === 'started' || kind === 'stopped' ? kind : '',
+      });
     }
 
     const hasAutomaticTargets = settings.autoAccelerationEnabled ||
@@ -1153,11 +1233,11 @@ module.exports = function startLeigodClean(officialRequire) {
       });
       const gameIds = new Set(matched.gameIds);
       if (matched.activeHandoff) {
-        queueAutoEvaluation(matched.gameIds);
+        queueAutoEvaluation(matched.gameIds, { lifecycleKind: 'started' });
         continue;
       }
       if (gameIds.size > 0) {
-        queueAutoEvaluation(gameIds, { allowSwitch: true });
+        queueAutoEvaluation(gameIds, { allowSwitch: true, lifecycleKind: 'started' });
       }
     }
   }
@@ -1170,6 +1250,7 @@ module.exports = function startLeigodClean(officialRequire) {
     autoLocalProcesses.clear();
     autoUnresolvedGameIds.clear();
     autoEvaluationQueue.clear();
+    gameLifecycleTracker.clear();
     pendingAutoStartEvents.length = 0;
     if (autoIndexRefreshTimer) {
       clearTimeout(autoIndexRefreshTimer);
@@ -1334,8 +1415,8 @@ module.exports = function startLeigodClean(officialRequire) {
     }
   }
 
-  function queueAutoEvaluation(gameIds, { allowSwitch = false } = {}) {
-    autoEvaluationQueue.enqueue(gameIds, { allowSwitch });
+  function queueAutoEvaluation(gameIds, { allowSwitch = false, lifecycleKind = '' } = {}) {
+    autoEvaluationQueue.enqueue(gameIds, { allowSwitch, lifecycleKind });
   }
 
   function scheduleAutoIndexRefresh() {
@@ -1351,21 +1432,26 @@ module.exports = function startLeigodClean(officialRequire) {
     autoIndexRefreshTimer?.unref?.();
   }
 
-  async function evaluateAutoGame(gameId, allowSwitch = false) {
+  async function evaluateAutoGame(gameId, allowSwitch = false, lifecycleKind = '') {
     const game = autoGameCache.get(gameId);
     if (!game || !processEvents?.snapshot.ready ||
       !resolveAutoGameIds(settings, autoCandidateIds).includes(gameId)) {
       return false;
     }
     try {
-      const runningByName = game.processes.some(
-        (processName) => processEvents.isRunning(processName),
+      const running = isAutoGameRunning(gameId, game);
+      const lifecycleTransition = gameLifecycleTracker.observe(
+        gameId,
+        game,
+        running,
+        lifecycleKind,
       );
-      const locations = autoGameLocations.get(gameId) ?? [];
-      const runningByLocation = locations.length > 0 && processEvents.runningProcesses.some(
-        (process) => executableMatchesLocations(process.path, locations),
-      );
-      const running = runningByName || runningByLocation;
+      if (lifecycleTransition === 'started' && !lastOfficialState.isLogin) {
+        showSystemNotification('请先登录雷神账户，再使用自动加速。', {
+          title: 'LeigodClean 自动加速失败',
+          silent: false,
+        });
+      }
       let watchState = autoWatchStates.get(gameId);
       const evaluation = evaluateAutoWatchState(watchState, {
         running,
@@ -1394,6 +1480,28 @@ module.exports = function startLeigodClean(officialRequire) {
       log(`Automatic acceleration event failed for game ${gameId}: ${messageOf(error)}`);
       return false;
     }
+  }
+
+  function isAutoGameRunning(gameId, game = autoGameCache.get(String(gameId))) {
+    if (!game || !processEvents?.snapshot.ready) {
+      return false;
+    }
+    const runningByName = game.processes.some(
+      (processName) => processEvents.isRunning(processName),
+    );
+    const locations = autoGameLocations.get(String(gameId)) ?? [];
+    const runningByLocation = locations.length > 0 && processEvents.runningProcesses.some(
+      (process) => executableMatchesLocations(process.path, locations),
+    );
+    return runningByName || runningByLocation;
+  }
+
+  function notifyGameLifecycle(game, kind) {
+    const title = String(game?.title ?? '').trim() || '游戏';
+    showSystemNotification(
+      kind === 'started' ? `检测到 ${title} 已启动。` : `${title} 已结束运行。`,
+      { silent: true },
+    );
   }
 
   function scheduleAutoRetry(gameId, watchState) {
@@ -1444,7 +1552,16 @@ module.exports = function startLeigodClean(officialRequire) {
   async function triggerAutoAcceleration(gameId, game, { notify = true } = {}) {
     const selection = settings.gameSelections[gameId] ?? defaultAutoSelection(game);
     if (!selection) {
+      const message = '没有可用于自动加速的区服，请先手动选择。';
       log(`Automatic acceleration skipped for game ${gameId}: no playable area`);
+      pendingStartUntil = 0;
+      if (notify) {
+        showSystemNotification(message, {
+          title: 'LeigodClean 自动加速失败',
+          silent: false,
+        });
+      }
+      scheduleIdleTimePause();
       return false;
     }
     autoStartBusy = true;
@@ -1465,28 +1582,22 @@ module.exports = function startLeigodClean(officialRequire) {
       rememberRecentGame(gameId);
       if (result?.needsAttention) {
         showOfficialWindow();
-      } else if (notify && settings.notificationsEnabled && Notification.isSupported()) {
-        new Notification({
-          title: 'LeigodClean',
-          body: `已检测到 ${game.title}，正在自动加速。`,
-          icon: appIcon,
-          silent: true,
-        }).show();
       }
       return true;
     } catch (error) {
       log(`Automatic acceleration failed for game ${gameId}: ${messageOf(error)}`);
-      if (settings.notificationsEnabled && Notification.isSupported()) {
-        new Notification({
+      pendingStartUntil = 0;
+      if (notify) {
+        showSystemNotification(messageOf(error), {
           title: 'LeigodClean 自动加速失败',
-          body: messageOf(error),
-          icon: appIcon,
-        }).show();
+          silent: false,
+        });
       }
       return false;
     } finally {
       autoStartBusy = false;
       sendState();
+      scheduleIdleTimePause();
     }
   }
 
@@ -1549,6 +1660,39 @@ module.exports = function startLeigodClean(officialRequire) {
       return combinedState();
     } finally {
       autoPauseInProgress = false;
+    }
+  }
+
+  function scheduleIdleTimePause() {
+    if (idlePauseScheduled || idlePauseInProgress || idlePauseManualOverride || autoStartBusy || closing ||
+      !settings.pauseTimeWhenIdle || !lastOfficialState.ready || !lastOfficialState.isLogin ||
+      lastOfficialState.accStatus !== 'normal' || Number(lastOfficialState.gameId) > 0 ||
+      lastOfficialState.timeStatus === 'pause' || Date.now() < pendingStartUntil) {
+      return;
+    }
+    idlePauseScheduled = true;
+    setImmediate(() => {
+      idlePauseScheduled = false;
+      void maintainIdleTimePause();
+    });
+  }
+
+  async function maintainIdleTimePause() {
+    if (idlePauseInProgress || idlePauseManualOverride || autoStartBusy || closing ||
+      !settings.pauseTimeWhenIdle || !lastOfficialState.ready || !lastOfficialState.isLogin ||
+      lastOfficialState.accStatus !== 'normal' || Number(lastOfficialState.gameId) > 0 ||
+      lastOfficialState.timeStatus === 'pause' || Date.now() < pendingStartUntil) {
+      return;
+    }
+    idlePauseInProgress = true;
+    try {
+      log('Pausing account time while no game is accelerated');
+      const next = await bridge.call('pause');
+      acceptOfficialState(next);
+    } catch (error) {
+      log(`Idle account-time pause failed: ${messageOf(error)}`);
+    } finally {
+      idlePauseInProgress = false;
     }
   }
 
@@ -1642,6 +1786,7 @@ module.exports = function startLeigodClean(officialRequire) {
   function disposeApplication() {
     stopOfficialStateWatch();
     processEvents?.stop();
+    gameLifecycleTracker.clear();
     for (const timer of autoRetryTimers.values()) {
       clearTimeout(timer);
     }
@@ -1695,6 +1840,10 @@ module.exports = function startLeigodClean(officialRequire) {
     setOfficialBackgroundPolicy(officialWindow);
 
     const gameId = String(lastOfficialState.gameId || '');
+    if (isAccelerationActive(lastOfficialState)) {
+      idlePauseManualOverride = false;
+      pendingStartUntil = 0;
+    }
     if (gameId && isAccelerationActive(lastOfficialState) &&
       (!isAccelerationActive(previous) || String(previous.gameId || '') !== gameId)) {
       rememberRecentGame(gameId);
@@ -1734,6 +1883,7 @@ module.exports = function startLeigodClean(officialRequire) {
     if (JSON.stringify(previous) !== JSON.stringify(lastOfficialState)) {
       sendState();
     }
+    scheduleIdleTimePause();
   }
 
   function sendState() {
@@ -1778,6 +1928,7 @@ module.exports = function startLeigodClean(officialRequire) {
     return {
       autoAccelerationEnabled: settings.autoAccelerationEnabled,
       autoPauseEnabled: settings.autoPauseEnabled,
+      pauseTimeWhenIdle: settings.pauseTimeWhenIdle,
       launchAtLogin: settings.launchAtLogin,
       minimizeToTray: settings.minimizeToTray,
       pauseOnClose: settings.pauseOnClose,
@@ -1851,6 +2002,7 @@ module.exports = function startLeigodClean(officialRequire) {
     return {
       autoAccelerationEnabled: value?.autoAccelerationEnabled === true,
       autoPauseEnabled: value?.autoPauseEnabled !== false,
+      pauseTimeWhenIdle: value?.pauseTimeWhenIdle !== false,
       launchAtLogin: value?.launchAtLogin === true,
       minimizeToTray: value?.minimizeToTray !== false,
       pauseOnClose: value?.pauseOnClose !== false,

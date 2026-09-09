@@ -65,7 +65,7 @@ function installOfficialShellIsolation({
   });
   const officialApp = new Proxy(electron.app, {
     get(target, property) {
-      if (property === 'setAppUserModelId') {
+      if (property === 'setAppUserModelId' || property === 'setToastActivatorCLSID') {
         return () => undefined;
       }
       const value = Reflect.get(target, property, target);

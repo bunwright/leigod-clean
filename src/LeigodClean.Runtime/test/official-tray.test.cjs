@@ -23,6 +23,7 @@ function createHarness() {
     app: {
       name: 'LeiGod',
       setAppUserModelId() { identityChanges += 1; },
+      setToastActivatorCLSID() { identityChanges += 1; },
     },
     BrowserWindow: NativeBrowserWindow,
     Tray: NativeTray,
@@ -53,6 +54,7 @@ test('suppresses the official tray and identity without replacing BrowserWindow'
   const intercepted = harness.moduleLoader._load('electron');
   assert.equal(intercepted.app.name, 'LeiGod');
   intercepted.app.setAppUserModelId('com.leigod.official');
+  intercepted.app.setToastActivatorCLSID('{00000000-0000-0000-0000-000000000000}');
   assert.equal(harness.identityChanges(), 0);
 
   const tray = new intercepted.Tray('icon');

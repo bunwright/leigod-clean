@@ -7,6 +7,7 @@ const {
   completeAutoWatchAttempt,
   defaultAutoSelection,
   evaluateAutoWatchState,
+  GameLifecycleTracker,
   resolveAutoGameIds,
   selectAutoEventGames,
 } = require('../auto-acceleration.cjs');
@@ -54,6 +55,65 @@ test('coalesces routine checks without granting session switching', async () => 
   assert.deepEqual(calls, [
     ['42', false],
     ['43', false],
+  ]);
+});
+
+test('forwards lifecycle metadata without changing switch serialization', async () => {
+  const calls = [];
+  const queue = new AutoEvaluationQueue({
+    getOrder: () => ['42'],
+    evaluate: async (...args) => {
+      calls.push(args);
+      return false;
+    },
+  });
+
+  await queue.enqueue(['42'], { allowSwitch: true, lifecycleKind: 'started' });
+  await queue.enqueue(['42'], { lifecycleKind: 'stopped' });
+
+  assert.deepEqual(calls, [
+    ['42', true, 'started'],
+    ['42', false, 'stopped'],
+  ]);
+});
+
+test('announces lifecycle edges immediately while suppressing launcher handoff exits', async () => {
+  const scheduled = [];
+  const events = [];
+  let running = true;
+  const tracker = new GameLifecycleTracker({
+    isRunning: () => running,
+    onStarted: (_gameId, game) => events.push(`started:${game.title}`),
+    onStopped: (_gameId, game) => events.push(`stopped:${game.title}`),
+    schedule(callback) {
+      const handle = { callback, cancelled: false, unref() {} };
+      scheduled.push(handle);
+      return handle;
+    },
+    cancel(handle) {
+      handle.cancelled = true;
+    },
+  });
+  const game = { title: 'Test Game' };
+
+  tracker.observe('42', game, true, 'started');
+  tracker.observe('42', game, false, 'stopped');
+  tracker.observe('42', game, true, 'started');
+  assert.equal(scheduled[0].cancelled, true);
+  assert.deepEqual(events, ['started:Test Game']);
+
+  running = false;
+  tracker.observe('42', game, false, 'stopped');
+  scheduled[1].callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ['started:Test Game', 'stopped:Test Game']);
+
+  running = true;
+  tracker.observe('42', game, true, 'started');
+  assert.deepEqual(events, [
+    'started:Test Game',
+    'stopped:Test Game',
+    'started:Test Game',
   ]);
 });
 

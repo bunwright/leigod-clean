@@ -1,6 +1,7 @@
 'use strict';
 
 const DEFAULT_RETRY_MS = 30000;
+const DEFAULT_END_DEBOUNCE_MS = 1000;
 
 class AutoEvaluationQueue {
   constructor({
@@ -16,14 +17,14 @@ class AutoEvaluationQueue {
     this._evaluate = evaluate;
     this._canContinue = canContinue;
     this._onError = onError;
-    this._routine = new Set();
+    this._routine = new Map();
     this._routineInFlight = new Set();
     this._triggers = [];
     this._drainPromise = null;
     this._generation = 0;
   }
 
-  enqueue(gameIds, { allowSwitch = false } = {}) {
+  enqueue(gameIds, { allowSwitch = false, lifecycleKind = '' } = {}) {
     const values = uniqueGameIds(gameIds);
     if (values.length === 0) {
       return this._drainPromise;
@@ -31,11 +32,11 @@ class AutoEvaluationQueue {
     if (allowSwitch) {
       // Keep process-start events separate: each real launch may switch once, while
       // aliases shared by multiple catalog entries must never cause a switch loop.
-      this._triggers.push(values);
+      this._triggers.push({ gameIds: values, lifecycleKind });
     } else {
       for (const gameId of values) {
-        if (!this._routineInFlight.has(gameId)) {
-          this._routine.add(gameId);
+        if (!this._routineInFlight.has(gameId) || lifecycleKind) {
+          this._routine.set(gameId, lifecycleKind);
         }
       }
     }
@@ -51,7 +52,8 @@ class AutoEvaluationQueue {
   }
 
   get pending() {
-    return this._routine.size + this._triggers.reduce((total, batch) => total + batch.length, 0);
+    return this._routine.size +
+      this._triggers.reduce((total, batch) => total + batch.gameIds.length, 0);
   }
 
   _ensureDrain() {
@@ -72,11 +74,13 @@ class AutoEvaluationQueue {
     while (this.pending > 0 && this._canContinue()) {
       const generation = this._generation;
       const trigger = this._triggers.shift();
-      const allowSwitch = Array.isArray(trigger);
-      const queued = allowSwitch ? new Set(trigger) : new Set(this._routine);
+      const allowSwitch = Boolean(trigger);
+      const queued = allowSwitch
+        ? new Map(trigger.gameIds.map((gameId) => [gameId, trigger.lifecycleKind]))
+        : new Map(this._routine);
       if (!allowSwitch) {
         this._routine.clear();
-        this._routineInFlight = queued;
+        this._routineInFlight = new Set(queued.keys());
       }
       const ordered = uniqueGameIds(this._getOrder()).filter((gameId) => queued.has(gameId));
       let actionTaken = false;
@@ -84,7 +88,11 @@ class AutoEvaluationQueue {
         if (generation !== this._generation || !this._canContinue()) {
           break;
         }
-        const started = await this._evaluate(gameId, allowSwitch && !actionTaken);
+        const started = await this._evaluate(
+          gameId,
+          allowSwitch && !actionTaken,
+          queued.get(gameId),
+        );
         actionTaken = started === true || actionTaken;
         if (allowSwitch && actionTaken) {
           break;
@@ -94,6 +102,91 @@ class AutoEvaluationQueue {
         this._routineInFlight.clear();
       }
     }
+  }
+}
+
+class GameLifecycleTracker {
+  constructor({
+    isRunning,
+    onStarted,
+    onStopped,
+    endDebounceMs = DEFAULT_END_DEBOUNCE_MS,
+    schedule = setTimeout,
+    cancel = clearTimeout,
+  }) {
+    if (typeof isRunning !== 'function' || typeof onStarted !== 'function' ||
+      typeof onStopped !== 'function') {
+      throw new TypeError('GameLifecycleTracker requires lifecycle callbacks.');
+    }
+    this._isRunning = isRunning;
+    this._onStarted = onStarted;
+    this._onStopped = onStopped;
+    this._endDebounceMs = Math.max(0, Number(endDebounceMs) || DEFAULT_END_DEBOUNCE_MS);
+    this._schedule = schedule;
+    this._cancel = cancel;
+    this._entries = new Map();
+  }
+
+  observe(gameId, game, running, lifecycleKind = '') {
+    const id = gameIdOf(gameId);
+    if (!id) {
+      return '';
+    }
+    const isRunning = running === true;
+    let entry = this._entries.get(id);
+    if (!entry) {
+      entry = { running: isRunning, startAnnounced: false, game, timer: null };
+      this._entries.set(id, entry);
+    } else {
+      entry.game = game;
+    }
+
+    if (isRunning) {
+      this._cancelPendingEnd(entry);
+      const shouldAnnounce = lifecycleKind === 'started' &&
+        (!entry.running || !entry.startAnnounced);
+      entry.running = true;
+      if (shouldAnnounce) {
+        entry.startAnnounced = true;
+        this._onStarted(id, game);
+      }
+      return shouldAnnounce ? 'started' : '';
+    }
+
+    if (lifecycleKind !== 'stopped' || !entry.running || entry.timer) {
+      return '';
+    }
+    entry.timer = this._schedule(() => {
+      entry.timer = null;
+      Promise.resolve(this._isRunning(id, entry.game))
+        .then((stillRunning) => {
+          if (stillRunning) {
+            entry.running = true;
+            return;
+          }
+          entry.running = false;
+          entry.startAnnounced = false;
+          this._onStopped(id, entry.game);
+        })
+        .catch(() => {});
+    }, this._endDebounceMs);
+    entry.timer?.unref?.();
+    return 'ending';
+  }
+
+  clear() {
+    for (const entry of this._entries.values()) {
+      this._cancelPendingEnd(entry);
+    }
+    this._entries.clear();
+  }
+
+  _cancelPendingEnd(entry) {
+    if (!entry.timer) {
+      return;
+    }
+    this._cancel(entry.timer);
+    entry.timer = null;
   }
 }
 
@@ -206,6 +299,7 @@ function evaluateAutoWatchState(state, input, now = Date.now()) {
 
 function completeAutoWatchAttempt(state, succeeded, now = Date.now(), retryMs = DEFAULT_RETRY_MS) {
   return {
+    ...state,
     latched: succeeded === true,
     retryAt: succeeded === true ? 0 : now + Math.max(1000, Number(retryMs) || DEFAULT_RETRY_MS),
   };
@@ -215,8 +309,10 @@ module.exports = {
   AutoEvaluationQueue,
   completeAutoWatchAttempt,
   defaultAutoSelection,
+  DEFAULT_END_DEBOUNCE_MS,
   DEFAULT_RETRY_MS,
   evaluateAutoWatchState,
+  GameLifecycleTracker,
   resolveAutoGameIds,
   selectAutoEventGames,
 };

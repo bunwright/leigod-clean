@@ -19,6 +19,8 @@ test('renderer initialization preserves a ready official state while its window 
   let officialWindow = null;
   let invokeHandler = null;
   let nextWindowId = 0;
+  let timeStatus = 'timeing';
+  let idlePauseCalls = 0;
 
   class FakeOfficialBridge {
     async install() {}
@@ -30,7 +32,19 @@ test('renderer initialization preserves a ready official state while its window 
           isLogin: true,
           accStatus: 'normal',
           gameId: 0,
-          timeStatus: 'pause',
+          timeStatus,
+          totalTimeLeft: 7200,
+        };
+      }
+      if (method === 'pause') {
+        idlePauseCalls += 1;
+        timeStatus = 'pause';
+        return {
+          ready: true,
+          isLogin: true,
+          accStatus: 'normal',
+          gameId: 0,
+          timeStatus,
           totalTimeLeft: 7200,
         };
       }
@@ -184,6 +198,8 @@ test('renderer initialization preserves a ready official state while its window 
     assert.equal(result.data.client.ready, true);
     assert.equal(result.data.client.isLogin, true);
     assert.equal(officialWindow.backgroundThrottling, true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(idlePauseCalls, 1);
   } finally {
     delete globalThis[singletonKey];
     if (previousBridgeModule) {

@@ -209,10 +209,11 @@ test('manual acceleration and account-time controls use independent official act
       afterRevision: initialStateEvent.revision,
       timeoutMs: 10000,
     });
-    acc.accInfo = { accStatus: 'speeding', game_id: 42 };
+    acc.accInfo = { accStatus: 'speeding', game_id: 42, flush: 1536 };
     stateSubscribers.at(-1)();
     const acceleratedStateEvent = await nextStateEvent;
     assert.equal(acceleratedStateEvent.state.gameId, 42);
+    assert.equal(acceleratedStateEvent.state.trafficKb, 1536);
 
     let durationOnlyResolved = false;
     const afterDuration = window.__leigodCleanOfficial.call('watchState', {
@@ -223,6 +224,7 @@ test('manual acceleration and account-time controls use independent official act
       return value;
     });
     acc.accInfo.duration = 1;
+    acc.accInfo.flush = 1800;
     stateSubscribers.at(-1)();
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(durationOnlyResolved, false, 'duration-only ticks do not wake the main process');
@@ -231,6 +233,16 @@ test('manual acceleration and account-time controls use independent official act
     const metricStateEvent = await afterDuration;
     assert.equal(metricStateEvent.state.duration, 1);
     assert.equal(metricStateEvent.state.delay, 25);
+    assert.equal(metricStateEvent.state.trafficKb, 1800);
+
+    const afterTraffic = window.__leigodCleanOfficial.call('watchState', {
+      afterRevision: metricStateEvent.revision,
+      timeoutMs: 10000,
+    });
+    acc.accInfo.flush = 3072;
+    stateSubscribers.at(-1)();
+    const trafficStateEvent = await afterTraffic;
+    assert.equal(trafficStateEvent.state.trafficKb, 3072);
 
     acc.accInfo = { accStatus: 'normal', game_id: 0 };
     assert.deepEqual(

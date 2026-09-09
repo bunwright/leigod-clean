@@ -14,9 +14,11 @@ test('main runtime loads first-run settings before starting the official client'
   const previousLocalAppData = process.env.LOCALAPPDATA;
   const previousResourcesPath = Object.getOwnPropertyDescriptor(process, 'resourcesPath');
   const officialCalls = [];
+  const identityCalls = [];
   const app = new EventEmitter();
   app.whenReady = () => new Promise(() => {});
-  app.setAppUserModelId = () => {};
+  app.setAppUserModelId = (value) => identityCalls.push(['app-id', value]);
+  app.setToastActivatorCLSID = (value) => identityCalls.push(['toast-clsid', value]);
 
   class BrowserWindow {}
   class Tray {}
@@ -51,6 +53,8 @@ test('main runtime loads first-run settings before starting the official client'
     });
     assert.doesNotThrow(() => startLeigodClean(officialRequire));
     assert.deepEqual(officialCalls, ['electron', 'bytenode', './main.jsc']);
+    assert.equal(identityCalls[0][1], 'io.github.bunwright.leigodclean');
+    assert.match(identityCalls[1][1], /^\{[0-9A-F-]{36}\}$/u);
   } finally {
     delete globalThis[singletonKey];
     if (previousLocalAppData === undefined) {

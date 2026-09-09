@@ -563,11 +563,13 @@ function renderSession() {
     renderDurationMetric(acceleration);
     elements.delayMetric.textContent = Number(client.delay) > 0 ? `${client.delay} ms` : '—';
     elements.lossMetric.textContent = Number(client.loss) > 0 ? `${client.loss}%` : '0%';
+    elements.trafficMetric.textContent = formatTraffic(client.trafficKb);
   } else {
     clearDurationClockTimer();
     elements.durationMetric.textContent = '—';
     elements.delayMetric.textContent = '—';
     elements.lossMetric.textContent = '—';
+    elements.trafficMetric.textContent = '—';
   }
   renderTelemetryFocus(acceleration);
   const monitorView = monitorPresentation(visibleMonitor);
@@ -661,6 +663,12 @@ function renderTelemetryFocus(acceleration = viewState.accelerationContext(
       icon: elements.telemetryLossIcon,
       activeCaption: '数值越低，连接越稳定',
     },
+    traffic: {
+      label: '会话流量',
+      value: elements.trafficMetric.textContent,
+      icon: elements.telemetryTrafficIcon,
+      activeCaption: '当前加速会话累计传输流量',
+    },
   };
   const selected = definitions[model.selectedMetric] ?? definitions.duration;
   elements.telemetryLabel.textContent = selected.label;
@@ -677,7 +685,7 @@ function renderTelemetryFocus(acceleration = viewState.accelerationContext(
     option.setAttribute('aria-selected', active ? 'true' : 'false');
     option.tabIndex = active ? 0 : -1;
   }
-  const chartVisible = model.selectedMetric !== 'duration';
+  const chartVisible = ['delay', 'loss'].includes(model.selectedMetric);
   elements.telemetryFocus.classList.toggle('charting', chartVisible);
   elements.telemetryFocus.closest('.session-panel')?.classList.toggle('charting', chartVisible);
   elements.telemetryChart.hidden = !chartVisible;
@@ -689,7 +697,7 @@ function renderTelemetryFocus(acceleration = viewState.accelerationContext(
 }
 
 function selectTelemetryMetric(metric, focus = false) {
-  if (!['duration', 'delay', 'loss'].includes(metric)) {
+  if (!['duration', 'delay', 'loss', 'traffic'].includes(metric)) {
     return;
   }
   model.selectedMetric = metric;
@@ -714,7 +722,7 @@ function telemetryCanSample(acceleration = viewState.accelerationContext(
   model.state?.client ?? {},
   model.selectedGame?.id,
 )) {
-  return model.selectedMetric !== 'duration' &&
+  return ['delay', 'loss'].includes(model.selectedMetric) &&
     acceleration.selectedIsActive &&
     document.hidden === false &&
     !elements.settingsDialog.open &&
@@ -759,7 +767,8 @@ function captureTelemetrySamples() {
 }
 
 function drawTelemetryChart() {
-  if (model.selectedMetric === 'duration' || elements.telemetryChart.hidden || document.hidden) {
+  if (!['delay', 'loss'].includes(model.selectedMetric) ||
+    elements.telemetryChart.hidden || document.hidden) {
     return;
   }
   if (model.telemetryFrame !== null) {
@@ -1289,12 +1298,13 @@ function openSettings() {
   const settings = model.settings ?? {
     autoAccelerationEnabled: false,
     autoPauseEnabled: true,
+    pauseTimeWhenIdle: true,
     launchAtLogin: false,
     minimizeToTray: true,
     pauseOnClose: true,
     notificationsEnabled: true,
-    startupTimeoutMinutes: 15,
-    graceMinutes: 10,
+    startupTimeoutMinutes: 10,
+    graceMinutes: 5,
     autoAccelerateGames: {},
     gameSelections: {},
     processOverrides: {},
@@ -1302,6 +1312,7 @@ function openSettings() {
   };
   elements.autoAccelerationInput.checked = settings.autoAccelerationEnabled === true;
   elements.autoPauseInput.checked = settings.autoPauseEnabled !== false;
+  elements.pauseTimeWhenIdleInput.checked = settings.pauseTimeWhenIdle !== false;
   elements.launchAtLoginInput.checked = settings.launchAtLogin === true;
   elements.minimizeToTrayInput.checked = settings.minimizeToTray !== false;
   elements.pauseOnCloseInput.checked = settings.pauseOnClose !== false;
@@ -1331,6 +1342,7 @@ async function saveSettings(event) {
     const next = {
       autoAccelerationEnabled: elements.autoAccelerationInput.checked,
       autoPauseEnabled: elements.autoPauseInput.checked,
+      pauseTimeWhenIdle: elements.pauseTimeWhenIdleInput.checked,
       launchAtLogin: elements.launchAtLoginInput.checked,
       minimizeToTray: elements.minimizeToTrayInput.checked,
       pauseOnClose: elements.pauseOnCloseInput.checked,
@@ -1416,6 +1428,21 @@ function formatClock(seconds) {
   const minutes = Math.floor((total % 3600) / 60);
   const remaining = total % 60;
   return [hours, minutes, remaining].map((part) => String(part).padStart(2, '0')).join(':');
+}
+
+function formatTraffic(kilobytes) {
+  const megabytes = Math.max(0, Number(kilobytes) || 0) / 1024;
+  if (megabytes >= 1024) {
+    return `${formatTrafficNumber(megabytes / 1024)} GB`;
+  }
+  return `${formatTrafficNumber(megabytes)} MB`;
+}
+
+function formatTrafficNumber(value) {
+  if (value === 0) {
+    return '0';
+  }
+  return value >= 100 ? String(Math.round(value)) : value.toFixed(1);
 }
 
 function formatRemaining(seconds) {
@@ -1514,7 +1541,7 @@ elements.metricSwitcher.addEventListener('click', (event) => {
   }
 });
 elements.metricSwitcher.addEventListener('keydown', (event) => {
-  const order = ['duration', 'delay', 'loss'];
+  const order = ['duration', 'delay', 'loss', 'traffic'];
   const current = order.indexOf(model.selectedMetric);
   let next = current;
   if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {

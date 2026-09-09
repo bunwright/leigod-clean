@@ -68,7 +68,10 @@ test('clean loading window is registered before the official runtime and officia
   assert.doesNotMatch(html, /正在准备|尚未就绪|继续自动连接|正在连接|等待官方客户端/u);
   assert.match(html, /id="loadingState"[^>]*role="status"[^>]*aria-label="正在加载"/u);
   assert.match(html, /id="accountButton"[^>]*hidden/u);
-  assert.match(mainRuntime, /app\.setAppUserModelId\('io\.github\.bunwright\.leigodclean'\)/u);
+  assert.match(mainRuntime, /app\.setAppUserModelId\?\.\(windowsAppUserModelId\)/u);
+  assert.match(mainRuntime, /app\.setToastActivatorCLSID\?\.\(toastActivatorClsid\)/u);
+  assert.match(mainRuntime, /shell\.writeShortcutLink\(shortcutPath, 'create'/u);
+  assert.match(mainRuntime, /appUserModelId:\s*windowsAppUserModelId/u);
   assert.ok(
     mainRuntime.indexOf('app.setAppUserModelId') < mainRuntime.indexOf("officialRequire('./main.jsc')"),
   );
@@ -110,11 +113,13 @@ test('primary acceleration control and switchable telemetry occupy the game work
   assert.ok(html.indexOf('id="startButton"') < html.indexOf('class="workspace-grid"'));
   assert.match(html, /class="session-control" id="sessionBadge"/u);
   assert.match(html, /id="metricSwitcher"[^>]*role="tablist"/u);
-  assert.match(html, /data-metric="duration"[\s\S]*data-metric="delay"[\s\S]*data-metric="loss"/u);
+  assert.match(html, /data-metric="duration"[\s\S]*data-metric="delay"[\s\S]*data-metric="loss"[\s\S]*data-metric="traffic"/u);
+  assert.ok(html.indexOf('id="metricSwitcher"') < html.indexOf('id="telemetryFocus"'));
   assert.match(script, /function selectTelemetryMetric/u);
   assert.match(html, /id="telemetryCanvas"[^>]*role="img"/u);
   assert.match(html, /data-range="60000"[\s\S]*data-range="300000"[\s\S]*data-range="900000"/u);
-  assert.match(script, /model\.selectedMetric !== 'duration'/u);
+  assert.match(script, /\['delay', 'loss'\]\.includes\(model\.selectedMetric\)/u);
+  assert.match(script, /formatTraffic\(client\.trafficKb\)/u);
   assert.match(script, /setTimeout\([\s\S]*2_000/u);
   assert.match(telemetryScript, /MAX_POINTS = 480/u);
   assert.match(styles, /\.workspace-grid\s*\{[^}]*align-items:\s*stretch/isu);
@@ -123,7 +128,8 @@ test('primary acceleration control and switchable telemetry occupy the game work
     styles,
     /\.session-panel\.charting \.monitor-detail,\s*\.session-panel\.charting \.process-overview\s*\{[^}]*display:\s*none/isu,
   );
-  assert.match(styles, /\.telemetry-canvas-wrap\s*\{[^}]*height:\s*74px/isu);
+  assert.match(styles, /\.telemetry-canvas-wrap\s*\{[^}]*height:\s*96px/isu);
+  assert.match(styles, /\.session-panel\.charting \.telemetry-focus\s*\{[^}]*min-height:\s*246px/isu);
 });
 
 test('acceleration state belongs to one game and active games are promoted visibly', () => {
@@ -173,6 +179,7 @@ test('official shell preserves renderer startup while keeping the clean tray aut
   assert.doesNotMatch(mainRuntime, /cancelCompatibilityFallback/u);
   assert.doesNotMatch(mainRuntime, /scheduleCompatibilityFallback|showing the official interface/u);
   assert.match(officialTray, /property === 'setAppUserModelId'/u);
+  assert.match(officialTray, /property === 'setToastActivatorCLSID'/u);
   assert.match(mainRuntime, /tray = new Tray\(/u);
   assert.match(mainRuntime, /tray\.on\('right-click', showTrayContextMenu\)/u);
   assert.match(mainRuntime, /tray\.popUpContextMenu/u);
@@ -204,6 +211,10 @@ test('preferences use a responsive two-column layout without requiring desktop s
   assert.match(html, /class="settings-layout"[\s\S]*class="settings-column"[\s\S]*class="settings-column"/u);
   assert.match(styles, /\.settings-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/isu);
   assert.match(styles, /\.settings-dialog form\s*\{[^}]*grid-template-rows:[^}]*overflow:\s*hidden/isu);
+  assert.match(html, /id="pauseTimeWhenIdleInput"/u);
+  assert.match(mainRuntime, /pauseTimeWhenIdle:\s*true/u);
+  assert.match(mainRuntime, /startupTimeoutMinutes:\s*10/u);
+  assert.match(mainRuntime, /graceMinutes:\s*5/u);
 });
 
 test('global and per-game automatic acceleration rules are independent', () => {

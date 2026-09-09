@@ -761,6 +761,7 @@ function installOfficialBridge(rankCatalog) {
       duration: toNumber(acceleration.duration, 0),
       delay: toNumber(acceleration.delay, 0),
       loss: toNumber(acceleration.lose ?? acceleration.line_lose, 0),
+      trafficKb: Math.max(0, toNumber(acceleration.flush, 0)),
       ...attention,
     };
   }
@@ -827,9 +828,10 @@ function installOfficialBridge(rankCatalog) {
   }
 
   function eventStateSignature(snapshot) {
-    const { duration: _duration, totalTimeLeft, ...eventState } = snapshot;
+    const { duration: _duration, trafficKb, totalTimeLeft, ...eventState } = snapshot;
     return JSON.stringify({
       ...eventState,
+      trafficMb: Math.floor(Math.max(0, toNumber(trafficKb, 0)) / 1024),
       totalTimeLeftMinutes: Math.floor(Math.max(0, toNumber(totalTimeLeft, 0)) / 60),
     });
   }

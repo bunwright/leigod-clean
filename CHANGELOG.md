@@ -4,6 +4,26 @@
 
 ## [未发布]
 
+## [0.5.0] - 2026-09-09
+
+### 新增
+
+- 检测到已启用自动加速的游戏启动或结束时立即发送系统通知；自动加速失败时另行提示原因。
+- 运行状态新增会话累计流量，按 MB 或 GB 显示。
+- 增加“空闲时保持时长暂停”偏好，并默认启用。
+
+### 改进
+
+- 为 Windows 通知注册稳定的应用身份与开始菜单入口，使通知来源显示为 LeigodClean。
+- 重新组织运行指标卡片：指标标签位于摘要上方，延迟与丢包图表获得更大的固定空间，切换时不再压缩卡片。
+- 默认启动等待调整为 10 分钟，默认退出宽限调整为 5 分钟。
+- 仅在会话流量跨越 1 MB 时推送状态更新，兼顾显示及时性与后台资源占用。
+
+### 质量保证
+
+- 增加游戏生命周期消抖、通知身份、会话流量和空闲时长暂停的回归测试。
+- 扩展界面契约测试，覆盖四项运行指标、固定图表布局和新增偏好。
+
 ## [0.4.3] - 2026-09-07
 
 ### 修复
@@ -117,7 +137,8 @@
 - 支持系统托盘、开机启动、官方界面回退入口及自动维护客户端入口补丁。
 - 建立 Windows 单文件构建、测试、校验和 GitHub Release 流程。
 
-[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.4.3...HEAD
+[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/bunwright/leigod-clean/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/bunwright/leigod-clean/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/bunwright/leigod-clean/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/bunwright/leigod-clean/compare/v0.4.0...v0.4.1
