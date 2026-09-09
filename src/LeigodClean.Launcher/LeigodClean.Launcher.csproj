@@ -3,9 +3,10 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>LeigodClean</AssemblyName>
     <RootNamespace>LeigodClean</RootNamespace>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <Authors>bunwright</Authors>
     <Product>LeigodClean</Product>
     <Description>Focused desktop interface and process-aware automation for Leigod on Windows.</Description>
@@ -19,6 +20,7 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <PublishTrimmed>true</PublishTrimmed>
     <TrimMode>full</TrimMode>
+    <_SuppressWinFormsTrimError>true</_SuppressWinFormsTrimError>
     <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>
     <SelfContained>false</SelfContained>
   </PropertyGroup>
@@ -31,6 +33,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="..\LeigodClean.Runtime\main.cjs" LogicalName="Runtime/main.cjs" />
+    <EmbeddedResource Include="..\LeigodClean.Runtime\native-pipe.cjs" LogicalName="Runtime/native-pipe.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\auto-acceleration.cjs" LogicalName="Runtime/auto-acceleration.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\local-games.cjs" LogicalName="Runtime/local-games.cjs" />
     <EmbeddedResource Include="..\LeigodClean.Runtime\monitor.cjs" LogicalName="Runtime/monitor.cjs" />

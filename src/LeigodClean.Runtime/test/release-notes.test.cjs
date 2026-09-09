@@ -11,9 +11,10 @@ const product = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'product.j
 
 test('release notes are extracted from exactly one changelog version', () => {
   const notes = extractReleaseNotes(changelog, `v${product.version}`);
-  assert.match(notes, /游戏启动或结束时立即发送系统通知/u);
-  assert.match(notes, /会话累计流量/u);
-  assert.match(notes, /空闲时保持时长暂停/u);
+  assert.match(notes, /极简模式/u);
+  assert.match(notes, /原生 Windows 控件/u);
+  assert.match(notes, /不采集或传输会话时长、延迟、丢包与流量/u);
+  assert.match(notes, /切换延迟或丢包图表时不再改变页面高度/u);
   assert.doesNotMatch(notes, /官方状态已就绪后被错误重置/u);
   assert.match(notes, /blob\/main\/CHANGELOG\.md/u);
 });

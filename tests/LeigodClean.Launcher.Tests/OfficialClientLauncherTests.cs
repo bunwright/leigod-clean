@@ -23,6 +23,7 @@ public sealed class OfficialClientLauncherTests
             Assert.True(File.Exists(mainPath));
             Assert.True(File.Exists(Path.Combine(runtimeRoot, "process-events.cjs")));
             Assert.True(File.Exists(Path.Combine(runtimeRoot, "shutdown.cjs")));
+            Assert.True(File.Exists(Path.Combine(runtimeRoot, "native-pipe.cjs")));
             string observerPath = Path.Combine(runtimeRoot, "process-observer.exe");
             Assert.True(File.Exists(observerPath));
             using (FileStream observer = File.OpenRead(observerPath))
@@ -87,5 +88,21 @@ public sealed class OfficialClientLauncherTests
         Assert.True(startInfo.CreateNoWindow);
         Assert.Equal(ProcessWindowStyle.Hidden, startInfo.WindowStyle);
         Assert.Equal(expectedBackgroundValue, startInfo.Environment["LEIGOD_CLEAN_START_HIDDEN"]);
+    }
+
+    [Fact]
+    public void NativeLaunchPlanUsesAnAuthenticatedPerProcessPipe()
+    {
+        NativeBridgeOptions bridge = NativeBridgeOptions.Create();
+        ProcessStartInfo startInfo = OfficialClientLauncher.CreateStartInfo(
+            Path.GetTempPath(),
+            true,
+            bridge);
+
+        Assert.Equal("1", startInfo.Environment["LEIGOD_CLEAN_NATIVE_MODE"]);
+        Assert.Equal(bridge.PipeName, startInfo.Environment["LEIGOD_CLEAN_NATIVE_PIPE"]);
+        Assert.Equal(bridge.Token, startInfo.Environment["LEIGOD_CLEAN_NATIVE_TOKEN"]);
+        Assert.StartsWith($"LeigodClean-{Environment.ProcessId}-", bridge.PipeName, StringComparison.Ordinal);
+        Assert.Equal(64, bridge.Token.Length);
     }
 }

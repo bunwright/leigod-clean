@@ -66,12 +66,12 @@ function rankGames(games, priorities = {}) {
 }
 
 function installOfficialBridge(rankCatalog) {
-  if (window.__leigodCleanOfficial?.version === 6) {
+  if (window.__leigodCleanOfficial?.version === 7) {
     return true;
   }
 
   const runtime = {
-    version: 6,
+    version: 7,
     games: null,
     gameById: new Map(),
     recentGameIds: [],
@@ -90,6 +90,15 @@ function installOfficialBridge(rankCatalog) {
     statePublishAgain: false,
     lastStateSignature: '',
     nextStateWaiterId: 0,
+    compactRevision: 0,
+    compactWaiters: new Map(),
+    compactSubscriptionsInitialized: false,
+    compactSubscriptionCount: 0,
+    compactPublishQueued: false,
+    compactPublishing: false,
+    compactPublishAgain: false,
+    lastCompactSignature: '',
+    nextCompactWaiterId: 0,
   };
 
   const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -674,7 +683,11 @@ function installOfficialBridge(rankCatalog) {
       ...runtime.recentGameIds,
     ]).slice(0, 20);
     await wait(350);
-    return { accepted: true, state: await state(), ...visibleAttention() };
+    return {
+      accepted: true,
+      state: payload.compact === true ? await compactState() : await state(),
+      ...visibleAttention(),
+    };
   }
 
   async function autoStart(payload = {}) {
@@ -694,6 +707,7 @@ function installOfficialBridge(rankCatalog) {
       areaId: payload.areaId,
       subAreaId: payload.subAreaId,
       lineKey: line.key,
+      compact: payload.compact === true,
     }, { automatic: true });
     return {
       ...result,
@@ -708,14 +722,14 @@ function installOfficialBridge(rankCatalog) {
     };
   }
 
-  async function stop() {
+  async function stop(payload = {}) {
     const acc = await requireStore('acc');
     const gameId = toNumber(acc.accInfo?.game_id, 0);
     await Promise.resolve(acc.stopAcc({ game_id: gameId, isConfirm: false, reason: 'other' }));
-    return state();
+    return payload.compact === true ? compactState() : state();
   }
 
-  async function pause() {
+  async function pause(payload = {}) {
     const acc = await requireStore('acc');
     const user = await requireStore('user');
     const gameId = toNumber(acc.accInfo?.game_id, 0);
@@ -726,10 +740,10 @@ function installOfficialBridge(rankCatalog) {
     if (user.userTimeInfo?.timeStatus !== 'pause') {
       await Promise.resolve(user.toggleTimeStatus('pause', { scene: 'other' }));
     }
-    return state();
+    return payload.compact === true ? compactState() : state();
   }
 
-  async function resume() {
+  async function resume(payload = {}) {
     const user = await requireStore('user');
     if (!user.isLogin) {
       throw plainError('请先在官方客户端中完成登录。', 'LOGIN_REQUIRED');
@@ -738,7 +752,7 @@ function installOfficialBridge(rankCatalog) {
       await Promise.resolve(user.toggleTimeStatus('resume', { scene: 'other' }));
       await wait(250);
     }
-    return state();
+    return payload.compact === true ? compactState() : state();
   }
 
   async function state() {
@@ -762,6 +776,27 @@ function installOfficialBridge(rankCatalog) {
       delay: toNumber(acceleration.delay, 0),
       loss: toNumber(acceleration.lose ?? acceleration.line_lose, 0),
       trafficKb: Math.max(0, toNumber(acceleration.flush, 0)),
+      ...attention,
+    };
+  }
+
+  async function compactState() {
+    const pinia = await requirePinia(1000);
+    const user = pinia._s.get('user');
+    const acc = pinia._s.get('acc');
+    const account = user?.userInfo ?? {};
+    const time = user?.userTimeInfo ?? {};
+    const acceleration = acc?.accInfo ?? {};
+    const attention = visibleAttention();
+    return {
+      ready: Boolean(user && acc),
+      isLogin: Boolean(user?.isLogin),
+      displayName: accountLabel(account),
+      timeStatus: String(time.timeStatus ?? ''),
+      totalTimeLeft: toNumber(time.totalTimeLeft, 0),
+      canPauseTimeLeft: toNumber(time.canPauseTimeLeft, 0),
+      accStatus: String(acceleration.accStatus ?? 'normal'),
+      gameId: toNumber(acceleration.game_id, 0),
       ...attention,
     };
   }
@@ -868,6 +903,127 @@ function installOfficialBridge(rankCatalog) {
     });
   }
 
+  async function ensureCompactSubscriptions() {
+    if (runtime.compactSubscriptionsInitialized) {
+      return;
+    }
+    const pinia = await requirePinia();
+    runtime.compactSubscriptionsInitialized = true;
+    for (const name of ['user', 'acc']) {
+      const store = pinia._s.get(name);
+      if (typeof store?.$subscribe !== 'function') {
+        continue;
+      }
+      let signature = compactStoreSignature(name, store);
+      store.$subscribe((_mutation, storeState) => {
+        const nextSignature = compactStoreSignature(name, storeState ?? store);
+        if (nextSignature === signature) {
+          return;
+        }
+        signature = nextSignature;
+        scheduleCompactPublish();
+      }, { detached: true });
+      runtime.compactSubscriptionCount += 1;
+    }
+    await publishCompactState();
+  }
+
+  function compactStoreSignature(name, store) {
+    if (name === 'acc') {
+      return JSON.stringify([
+        String(store?.accInfo?.accStatus ?? 'normal'),
+        toNumber(store?.accInfo?.game_id, 0),
+      ]);
+    }
+    const time = store?.userTimeInfo ?? {};
+    return JSON.stringify([
+      Boolean(store?.isLogin),
+      accountLabel(store?.userInfo ?? {}),
+      String(time.timeStatus ?? ''),
+      Math.floor(Math.max(0, toNumber(time.totalTimeLeft, 0)) / 60),
+      Math.floor(Math.max(0, toNumber(time.canPauseTimeLeft, 0)) / 60),
+    ]);
+  }
+
+  function scheduleCompactPublish() {
+    if (runtime.compactPublishQueued) {
+      return;
+    }
+    runtime.compactPublishQueued = true;
+    queueMicrotask(() => {
+      runtime.compactPublishQueued = false;
+      void publishCompactState().catch(() => {});
+    });
+  }
+
+  async function publishCompactState() {
+    if (runtime.compactPublishing) {
+      runtime.compactPublishAgain = true;
+      return;
+    }
+    runtime.compactPublishing = true;
+    try {
+      const snapshot = await compactState();
+      const signature = JSON.stringify({
+        ...snapshot,
+        totalTimeLeftMinutes: Math.floor(Math.max(0, toNumber(snapshot.totalTimeLeft, 0)) / 60),
+        totalTimeLeft: undefined,
+      });
+      if (signature === runtime.lastCompactSignature) {
+        return;
+      }
+      runtime.lastCompactSignature = signature;
+      runtime.compactRevision += 1;
+      for (const [waiterId, waiter] of runtime.compactWaiters) {
+        runtime.compactWaiters.delete(waiterId);
+        clearTimeout(waiter.timer);
+        waiter.resolve({
+          revision: runtime.compactRevision,
+          state: snapshot,
+          subscribed: runtime.compactSubscriptionCount > 0,
+          heartbeat: false,
+        });
+      }
+    } finally {
+      runtime.compactPublishing = false;
+      if (runtime.compactPublishAgain) {
+        runtime.compactPublishAgain = false;
+        scheduleCompactPublish();
+      }
+    }
+  }
+
+  async function watchCompactState(payload = {}) {
+    await ensureCompactSubscriptions();
+    const afterRevision = Math.max(0, toNumber(payload.afterRevision, 0));
+    if (runtime.compactRevision > afterRevision) {
+      return {
+        revision: runtime.compactRevision,
+        state: await compactState(),
+        subscribed: runtime.compactSubscriptionCount > 0,
+        heartbeat: false,
+      };
+    }
+    const timeoutMs = Math.min(120000, Math.max(10000, toNumber(payload.timeoutMs, 60000)));
+    return new Promise((resolve, reject) => {
+      const waiterId = ++runtime.nextCompactWaiterId;
+      const timer = setTimeout(async () => {
+        runtime.compactWaiters.delete(waiterId);
+        try {
+          resolve({
+            revision: runtime.compactRevision,
+            state: await compactState(),
+            subscribed: runtime.compactSubscriptionCount > 0,
+            heartbeat: true,
+          });
+        } catch (error) {
+          reject(error);
+        }
+      }, timeoutMs);
+      runtime.compactWaiters.set(waiterId, { resolve, timer });
+    });
+  }
+
   async function diagnostics() {
     const pinia = await requirePinia();
     const databases = await databaseCandidates().catch(() => []);
@@ -896,6 +1052,8 @@ function installOfficialBridge(rankCatalog) {
     start,
     state,
     stop,
+    compactState,
+    watchCompactState,
     watchState,
   };
   window.__leigodCleanOfficial = Object.freeze({

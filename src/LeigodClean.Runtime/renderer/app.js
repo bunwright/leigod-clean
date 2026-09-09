@@ -1296,6 +1296,7 @@ function syncModalPresentation() {
 
 function openSettings() {
   const settings = model.settings ?? {
+    minimalMode: false,
     autoAccelerationEnabled: false,
     autoPauseEnabled: true,
     pauseTimeWhenIdle: true,
@@ -1310,6 +1311,7 @@ function openSettings() {
     processOverrides: {},
     recentGameIds: [],
   };
+  elements.minimalModeInput.checked = settings.minimalMode === true;
   elements.autoAccelerationInput.checked = settings.autoAccelerationEnabled === true;
   elements.autoPauseInput.checked = settings.autoPauseEnabled !== false;
   elements.pauseTimeWhenIdleInput.checked = settings.pauseTimeWhenIdle !== false;
@@ -1340,6 +1342,7 @@ async function saveSettings(event) {
   }
   try {
     const next = {
+      minimalMode: elements.minimalModeInput.checked,
       autoAccelerationEnabled: elements.autoAccelerationInput.checked,
       autoPauseEnabled: elements.autoPauseInput.checked,
       pauseTimeWhenIdle: elements.pauseTimeWhenIdleInput.checked,

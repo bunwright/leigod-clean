@@ -64,6 +64,7 @@ test('clean loading window is registered before the official runtime and officia
   assert.doesNotMatch(mainRuntime, /showing the official interface/u);
   assert.match(mainRuntime, /Clean renderer failed to load/u);
   assert.match(mainRuntime, /Clean renderer exited unexpectedly/u);
+  assert.match(mainRuntime, /width:\s*1120,[\s\S]{0,80}?height:\s*800,[\s\S]{0,80}?minHeight:\s*700/u);
   assert.match(mainRuntime, /officialVisible = true;\s*showOfficialWindow\(\)/u);
   assert.doesNotMatch(html, /正在准备|尚未就绪|继续自动连接|正在连接|等待官方客户端/u);
   assert.match(html, /id="loadingState"[^>]*role="status"[^>]*aria-label="正在加载"/u);
@@ -129,7 +130,11 @@ test('primary acceleration control and switchable telemetry occupy the game work
     /\.session-panel\.charting \.monitor-detail,\s*\.session-panel\.charting \.process-overview\s*\{[^}]*display:\s*none/isu,
   );
   assert.match(styles, /\.telemetry-canvas-wrap\s*\{[^}]*height:\s*96px/isu);
-  assert.match(styles, /\.session-panel\.charting \.telemetry-focus\s*\{[^}]*min-height:\s*246px/isu);
+  assert.match(styles, /\.panel\s*\{[^}]*height:\s*520px[^}]*min-height:\s*520px/isu);
+  assert.match(styles, /\.content\s*\{[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*scroll[^}]*scrollbar-gutter:\s*stable/isu);
+  assert.match(styles, /\.process-overview\s*\{[^}]*min-width:\s*0[^}]*overflow:\s*hidden/isu);
+  assert.match(styles, /\.metric-switcher\s*\{[^}]*grid-template-columns:\s*repeat\(2/isu);
+  assert.match(styles, /\.session-panel\.charting \.telemetry-focus\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0/isu);
 });
 
 test('acceleration state belongs to one game and active games are promoted visibly', () => {
@@ -157,11 +162,11 @@ test('process automation is event-driven and independent of the official native 
   assert.doesNotMatch(mainRuntime, /setInterval\s*\(/u);
   assert.doesNotMatch(mainRuntime, /win32Addon|isProcessRunning/u);
   assert.match(mainRuntime, /processEvents\.subscribe\(handleProcessEvent\)/u);
-  assert.match(mainRuntime, /bridge\.call\('watchState'/u);
+  assert.match(mainRuntime, /nativeMode \? 'watchCompactState' : 'watchState'/u);
   assert.match(processEvents, /--process-events/u);
   assert.match(mainRuntime, /process-observer\.exe/u);
   assert.match(project, /process-events\.cjs/u);
-  assert.match(project, /PublishTrimmed>true/u);
+  assert.match(project, /PublishSingleFile>true/u);
 });
 
 test('official shell preserves renderer startup while keeping the clean tray authoritative', () => {

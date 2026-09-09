@@ -16,6 +16,13 @@ internal static class Program
 
         try
         {
+            if (args.Contains("--minimal-ui-smoke-test", StringComparer.OrdinalIgnoreCase))
+            {
+                return MinimalApplication.SmokeTest();
+            }
+
+            WaitForRestartTarget(args);
+
             bool startInBackground = args.Contains("--background", StringComparer.OrdinalIgnoreCase);
             if (TryReadModePath(args, ElevatedLaunchArgument, out string? launchRoot))
             {
@@ -42,7 +49,7 @@ internal static class Program
 
             RuntimeInstaller.Install(installRoot);
             TryApplyPatch(patcher);
-            OfficialClientLauncher.Launch(installRoot, startInBackground);
+            LaunchClient(installRoot, startInBackground);
             return 0;
         }
         catch (OperationCanceledException)
@@ -80,8 +87,21 @@ internal static class Program
         }
         RuntimeInstaller.Install(installRoot);
         TryApplyPatch(patcher);
-        OfficialClientLauncher.Launch(installRoot, startInBackground);
+        LaunchClient(installRoot, startInBackground);
         return 0;
+    }
+
+    private static void LaunchClient(string installRoot, bool startInBackground)
+    {
+        if (!MinimalModeSettings.IsEnabled())
+        {
+            OfficialClientLauncher.Launch(installRoot, startInBackground);
+            return;
+        }
+
+        NativeBridgeOptions options = NativeBridgeOptions.Create();
+        OfficialClientLauncher.LaunchNative(installRoot, startInBackground, options);
+        MinimalApplication.Run(options, startInBackground);
     }
 
     private static PatchInspection? TryInspect(LeigodPatcher patcher)
@@ -167,6 +187,32 @@ internal static class Program
     {
         using WindowsIdentity identity = WindowsIdentity.GetCurrent();
         return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    private static void WaitForRestartTarget(string[] args)
+    {
+        for (int index = 0; index < args.Length - 1; index++)
+        {
+            if (!string.Equals(args[index], "--restart-wait", StringComparison.OrdinalIgnoreCase) ||
+                !int.TryParse(args[index + 1], out int processId) || processId <= 0 ||
+                processId == Environment.ProcessId)
+            {
+                continue;
+            }
+            try
+            {
+                using Process process = Process.GetProcessById(processId);
+                if (!process.WaitForExit(30000))
+                {
+                    throw new TimeoutException("等待旧版 LeigodClean 退出超时。");
+                }
+            }
+            catch (ArgumentException)
+            {
+                // The previous process has already exited.
+            }
+            return;
+        }
     }
 
     private static int RunElevated(string mode, string installRoot, bool startInBackground)

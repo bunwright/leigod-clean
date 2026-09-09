@@ -8,6 +8,7 @@ internal static class RuntimeInstaller
     private static readonly string[] Files =
     [
         "main.cjs",
+        "native-pipe.cjs",
         "process-observer.exe",
         "auto-acceleration.cjs",
         "local-games.cjs",

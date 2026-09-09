@@ -3,6 +3,7 @@ obj/
 .vs/
 publish/
 artifacts/
+work/
 TestResults/
 *.user
 *.suo

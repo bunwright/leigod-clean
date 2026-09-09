@@ -22,6 +22,7 @@ module.exports = function startLeigodClean(officialRequire) {
   } = electron;
   const fs = require('node:fs');
   const path = require('node:path');
+  const childProcess = require('node:child_process');
   const {
     AutoEvaluationQueue,
     completeAutoWatchAttempt,
@@ -39,6 +40,7 @@ module.exports = function startLeigodClean(officialRequire) {
   const { installOfficialShellIsolation } = require('./official-tray.cjs');
   const { OfficialBridge } = require('./official-bridge.cjs');
   const { normalizeProcessName, ProcessEventSource } = require('./process-events.cjs');
+  const { compactApplicationState, createNativePipeServer } = require('./native-pipe.cjs');
   const { createExitConfirmation, createShutdownCoordinator } = require('./shutdown.cjs');
   const {
     buildTrayMenuTemplate,
@@ -75,7 +77,11 @@ module.exports = function startLeigodClean(officialRequire) {
     'unknown',
   );
   const startHidden = process.env.LEIGOD_CLEAN_START_HIDDEN === '1';
+  const nativeMode = process.env.LEIGOD_CLEAN_NATIVE_MODE === '1';
+  const nativePipeName = String(process.env.LEIGOD_CLEAN_NATIVE_PIPE ?? '');
+  const nativePipeToken = String(process.env.LEIGOD_CLEAN_NATIVE_TOKEN ?? '');
   const defaults = Object.freeze({
+    minimalMode: false,
     autoAccelerationEnabled: false,
     autoPauseEnabled: true,
     pauseTimeWhenIdle: true,
@@ -100,6 +106,7 @@ module.exports = function startLeigodClean(officialRequire) {
   let officialWindowScore = -1;
   let cleanWindow = null;
   let tray = null;
+  let nativePipe = null;
   let appIcon = null;
   let trayIcons = null;
   let trayStatusSignature = '';
@@ -227,14 +234,25 @@ module.exports = function startLeigodClean(officialRequire) {
   app.whenReady().then(() => {
     log('Electron application ready');
     registerNotificationIdentity();
-    registerCleanIpc();
-    try {
-      createTray();
-    } catch (error) {
-      log(`Tray initialization failed: ${messageOf(error)}`);
+    if (nativeMode) {
+      nativePipe = createNativePipeServer({
+        pipeName: nativePipeName,
+        token: nativePipeToken,
+        invoke: invokeCleanMethod,
+        initialState: () => combinedState(),
+        log,
+      });
+      log('Native minimal mode initialized');
+    } else {
+      registerCleanIpc();
+      try {
+        createTray();
+      } catch (error) {
+        log(`Tray initialization failed: ${messageOf(error)}`);
+      }
+      createCleanWindow();
+      log('Clean window created');
     }
-    createCleanWindow();
-    log('Clean window created');
     processEvents?.start();
     try {
       configureLoginItem(settings.launchAtLogin);
@@ -400,9 +418,9 @@ module.exports = function startLeigodClean(officialRequire) {
         title: 'LeigodClean',
         icon: appIcon,
         width: 1120,
-        height: 740,
+        height: 800,
         minWidth: 920,
-        minHeight: 620,
+        minHeight: 700,
         center: true,
         show: false,
         frame: true,
@@ -853,9 +871,9 @@ module.exports = function startLeigodClean(officialRequire) {
   async function invokeCleanMethod(method, payload) {
     switch (method) {
       case 'initialize':
-        log('Clean renderer initialization requested');
+        log(`${nativeMode ? 'Native client' : 'Clean renderer'} initialization requested`);
         await refreshOfficialState();
-        log(`Clean renderer initialization completed; officialReady=${lastOfficialState.ready}`);
+        log(`Client initialization completed; officialReady=${lastOfficialState.ready}`);
         return combinedState();
       case 'searchGames': {
         const games = await bridge.call('searchGames', {
@@ -888,6 +906,7 @@ module.exports = function startLeigodClean(officialRequire) {
           areaId: numericId(payload.areaId),
           subAreaId: optionalNumericId(payload.subAreaId),
           lineKey: String(payload.lineKey ?? '').slice(0, 240),
+          compact: nativeMode,
         });
         if (result?.needsAttention) {
           showOfficialWindow();
@@ -901,7 +920,7 @@ module.exports = function startLeigodClean(officialRequire) {
       case 'stopAcceleration': {
         monitoredGameId = '';
         monitor.stop('manual-stop');
-        const next = await bridge.call('stop');
+        const next = await bridge.call('stop', { compact: nativeMode });
         acceptOfficialState(next);
         return combinedState();
       }
@@ -913,7 +932,7 @@ module.exports = function startLeigodClean(officialRequire) {
       case 'resumeTime': {
         const previousOverride = idlePauseManualOverride;
         try {
-          const next = await bridge.call('resume');
+          const next = await bridge.call('resume', { compact: nativeMode });
           idlePauseManualOverride = true;
           acceptOfficialState(next);
           return combinedState();
@@ -921,6 +940,23 @@ module.exports = function startLeigodClean(officialRequire) {
           idlePauseManualOverride = previousOverride;
           throw error;
         }
+      }
+      case 'toggleTime': {
+        const current = await bridge.call(nativeMode ? 'compactState' : 'state');
+        acceptOfficialState(current);
+        return invokeCleanMethod(lastOfficialState.timeStatus === 'pause' ? 'resumeTime' : 'pauseTime', {});
+      }
+      case 'startSavedGame': {
+        const gameId = String(numericId(payload.gameId));
+        idlePauseManualOverride = false;
+        const game = await getAutoGame(gameId);
+        rememberGameSummary(gameId, game.title);
+        if (!await triggerAutoAcceleration(gameId, game, { notify: false })) {
+          const error = new Error('无法使用上次配置开始加速。');
+          error.code = 'START_FAILED';
+          throw error;
+        }
+        return combinedState();
       }
       case 'showOfficial':
         showOfficialWindow();
@@ -932,18 +968,17 @@ module.exports = function startLeigodClean(officialRequire) {
         return combinedState();
       case 'getSettings':
         return publicSettings();
-      case 'updateSettings':
-        {
-          const nextSettings = validateSettings(payload);
-          const pauseTimeWhenIdleChanged =
-            nextSettings.pauseTimeWhenIdle !== settings.pauseTimeWhenIdle;
-          if (nextSettings.launchAtLogin !== settings.launchAtLogin) {
-            configureLoginItem(nextSettings.launchAtLogin);
-          }
-          settings = nextSettings;
-          if (pauseTimeWhenIdleChanged) {
-            idlePauseManualOverride = false;
-          }
+      case 'updateSettings': {
+        const nextSettings = validateSettings(payload);
+        const minimalModeChanged = nextSettings.minimalMode !== settings.minimalMode;
+        const pauseTimeWhenIdleChanged =
+          nextSettings.pauseTimeWhenIdle !== settings.pauseTimeWhenIdle;
+        if (nextSettings.launchAtLogin !== settings.launchAtLogin) {
+          configureLoginItem(nextSettings.launchAtLogin);
+        }
+        settings = nextSettings;
+        if (pauseTimeWhenIdleChanged) {
+          idlePauseManualOverride = false;
         }
         saveSettings();
         resetAutoAccelerationIndex(true);
@@ -956,7 +991,11 @@ module.exports = function startLeigodClean(officialRequire) {
           await attachMonitor(monitoredGameId, true);
         }
         scheduleIdleTimePause();
+        if (!nativeMode && minimalModeChanged) {
+          scheduleApplicationRestart();
+        }
         return publicSettings();
+      }
       case 'setGameAutoAcceleration': {
         const gameId = String(numericId(payload.gameId));
         const enabled = Boolean(payload.enabled);
@@ -999,6 +1038,9 @@ module.exports = function startLeigodClean(officialRequire) {
         clipboard.writeText(JSON.stringify(diagnostics, null, 2));
         return true;
       }
+      case 'quit':
+        setImmediate(() => void shutdown.request());
+        return true;
       default: {
         const error = new Error('不支持的操作。');
         error.code = 'METHOD_NOT_ALLOWED';
@@ -1013,7 +1055,7 @@ module.exports = function startLeigodClean(officialRequire) {
     }
     stateRefreshing = true;
     try {
-      acceptOfficialState(await bridge.call('state'));
+      acceptOfficialState(await bridge.call(nativeMode ? 'compactState' : 'state'));
     } catch (error) {
       log(`Official state refresh failed: ${error?.stack ?? messageOf(error)}`);
       acceptOfficialState({
@@ -1024,6 +1066,28 @@ module.exports = function startLeigodClean(officialRequire) {
     } finally {
       stateRefreshing = false;
     }
+  }
+
+  function scheduleApplicationRestart() {
+    const launcherPath = readLauncherPath();
+    if (!launcherPath || !fs.existsSync(launcherPath)) {
+      log('Automatic restart skipped because the launcher path is unavailable');
+      return false;
+    }
+    setTimeout(() => {
+      try {
+        const restart = childProcess.spawn(launcherPath, ['--restart-wait', String(process.pid)], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        restart.unref();
+        void shutdown.request();
+      } catch (error) {
+        log(`Automatic restart failed: ${messageOf(error)}`);
+      }
+    }, 300);
+    return true;
   }
 
   function startOfficialStateWatch(window) {
@@ -1056,7 +1120,10 @@ module.exports = function startLeigodClean(officialRequire) {
       return;
     }
     try {
-      const update = await bridge.call('watchState', { afterRevision, timeoutMs: 60000 });
+      const update = await bridge.call(nativeMode ? 'watchCompactState' : 'watchState', {
+        afterRevision,
+        timeoutMs: 60000,
+      });
       if (generation !== officialStateWatchGeneration || window !== officialWindow || closing) {
         return;
       }
@@ -1568,7 +1635,11 @@ module.exports = function startLeigodClean(officialRequire) {
     pendingStartUntil = Date.now() + 30000;
     try {
       log(`Automatic acceleration triggered for game ${gameId}`);
-      const result = await bridge.call('autoStart', { gameId: numericId(gameId), ...selection });
+      const result = await bridge.call('autoStart', {
+        gameId: numericId(gameId),
+        ...selection,
+        compact: nativeMode,
+      });
       if (result?.selection) {
         settings.gameSelections = {
           ...settings.gameSelections,
@@ -1646,7 +1717,7 @@ module.exports = function startLeigodClean(officialRequire) {
   async function performPause(reason) {
     autoPauseInProgress = true;
     try {
-      const result = await bridge.call('pause');
+      const result = await bridge.call('pause', { compact: nativeMode });
       acceptOfficialState(result);
       monitoredGameId = '';
       if (reason !== 'manual-pause' && settings.notificationsEnabled && Notification.isSupported()) {
@@ -1687,7 +1758,7 @@ module.exports = function startLeigodClean(officialRequire) {
     idlePauseInProgress = true;
     try {
       log('Pausing account time while no game is accelerated');
-      const next = await bridge.call('pause');
+      const next = await bridge.call('pause', { compact: nativeMode });
       acceptOfficialState(next);
     } catch (error) {
       log(`Idle account-time pause failed: ${messageOf(error)}`);
@@ -1785,6 +1856,8 @@ module.exports = function startLeigodClean(officialRequire) {
 
   function disposeApplication() {
     stopOfficialStateWatch();
+    nativePipe?.close();
+    nativePipe = null;
     processEvents?.stop();
     gameLifecycleTracker.clear();
     for (const timer of autoRetryTimers.values()) {
@@ -1809,6 +1882,7 @@ module.exports = function startLeigodClean(officialRequire) {
         startedAt,
         platform: `${process.platform} ${process.arch}`,
         electron: String(process.versions.electron ?? ''),
+        servicePid: process.pid,
       },
       client: {
         ...lastOfficialState,
@@ -1888,6 +1962,7 @@ module.exports = function startLeigodClean(officialRequire) {
 
   function sendState() {
     updateTrayStatus();
+    nativePipe?.broadcast(compactApplicationState(combinedState()));
     if (!cleanWindow || cleanWindow.isDestroyed() || cleanWindow.webContents.isDestroyed()) {
       return;
     }
@@ -1926,6 +2001,7 @@ module.exports = function startLeigodClean(officialRequire) {
 
   function publicSettings() {
     return {
+      minimalMode: settings.minimalMode,
       autoAccelerationEnabled: settings.autoAccelerationEnabled,
       autoPauseEnabled: settings.autoPauseEnabled,
       pauseTimeWhenIdle: settings.pauseTimeWhenIdle,
@@ -2000,6 +2076,7 @@ module.exports = function startLeigodClean(officialRequire) {
       }
     }
     return {
+      minimalMode: value?.minimalMode === true,
       autoAccelerationEnabled: value?.autoAccelerationEnabled === true,
       autoPauseEnabled: value?.autoPauseEnabled !== false,
       pauseTimeWhenIdle: value?.pauseTimeWhenIdle !== false,

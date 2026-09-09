@@ -244,6 +244,34 @@ test('manual acceleration and account-time controls use independent official act
     const trafficStateEvent = await afterTraffic;
     assert.equal(trafficStateEvent.state.trafficKb, 3072);
 
+    const compactInitial = await window.__leigodCleanOfficial.call('watchCompactState', {
+      afterRevision: 0,
+      timeoutMs: 10000,
+    });
+    assert.equal(Object.hasOwn(compactInitial.state, 'duration'), false);
+    assert.equal(Object.hasOwn(compactInitial.state, 'delay'), false);
+    assert.equal(Object.hasOwn(compactInitial.state, 'loss'), false);
+    assert.equal(Object.hasOwn(compactInitial.state, 'trafficKb'), false);
+    let metricOnlyResolved = false;
+    const compactNext = window.__leigodCleanOfficial.call('watchCompactState', {
+      afterRevision: compactInitial.revision,
+      timeoutMs: 10000,
+    }).then((value) => {
+      metricOnlyResolved = true;
+      return value;
+    });
+    acc.accInfo.duration = 99;
+    acc.accInfo.delay = 33;
+    acc.accInfo.lose = 0.5;
+    acc.accInfo.flush = 8192;
+    stateSubscribers.at(-1)();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(metricOnlyResolved, false, 'session metrics never wake native mode');
+    acc.accInfo.game_id = 43;
+    stateSubscribers.at(-1)();
+    const compactChanged = await compactNext;
+    assert.equal(compactChanged.state.gameId, 43);
+
     acc.accInfo = { accStatus: 'normal', game_id: 0 };
     assert.deepEqual(
       await window.__leigodCleanOfficial.call('autoCandidates'),
