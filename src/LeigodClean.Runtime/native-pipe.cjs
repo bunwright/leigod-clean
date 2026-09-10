@@ -123,6 +123,21 @@ function createNativePipeServer({ pipeName, token, invoke, initialState, log = (
         write(socket, message);
       }
     },
+    broadcastNotification(notification) {
+      const source = notification && typeof notification === 'object' ? notification : {};
+      const message = {
+        type: 'notification',
+        data: {
+          title: String(source.title ?? 'LeigodClean').slice(0, 128),
+          body: String(source.body ?? '').slice(0, 1024),
+          silent: source.silent !== false,
+        },
+      };
+      for (const socket of sockets) {
+        write(socket, message);
+      }
+      return sockets.size;
+    },
     close() {
       if (closed) {
         return;

@@ -4,6 +4,18 @@
 
 ## [未发布]
 
+## [0.6.2] - 2026-09-10
+
+### 改进
+
+- 极简模式由原生托盘接收后台通知事件，并在原生界面进程不可用时回退到系统通知通道。
+- 增加通知请求、通道选择和投递失败日志，便于定位 Windows 通知配置问题。
+
+### 修复
+
+- 修复关闭全局和单游戏自动加速后，已安装及最近游戏不再触发启动、结束通知的问题。
+- 统一自动暂停及托盘操作失败的通知路径，确保普通模式和极简模式行为一致。
+
 ## [0.6.1] - 2026-09-10
 
 ### 改进
@@ -169,7 +181,8 @@
 - 支持系统托盘、开机启动、官方界面回退入口及自动维护客户端入口补丁。
 - 建立 Windows 单文件构建、测试、校验和 GitHub Release 流程。
 
-[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.6.1...HEAD
+[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/bunwright/leigod-clean/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/bunwright/leigod-clean/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/bunwright/leigod-clean/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/bunwright/leigod-clean/compare/v0.4.3...v0.5.0

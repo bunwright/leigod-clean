@@ -144,6 +144,7 @@ internal sealed class MinimalMainForm : Form
         notifyIcon.DoubleClick += (_, _) => RestoreWindow();
 
         client.StateChanged += OnStateChanged;
+        client.NotificationReceived += OnNotificationReceived;
         Shown += async (_, _) => await InitializeAsync();
         Resize += (_, _) => HandleMinimize();
         FormClosing += OnFormClosing;
@@ -275,6 +276,27 @@ internal sealed class MinimalMainForm : Form
             return;
         }
         BeginInvoke(() => ApplyState(next));
+    }
+
+    private void OnNotificationReceived(object? sender, NativeNotificationEventArgs notification)
+    {
+        if (IsDisposed || !IsHandleCreated)
+        {
+            return;
+        }
+        BeginInvoke(() =>
+        {
+            if (IsDisposed)
+            {
+                return;
+            }
+            notifyIcon.BalloonTipTitle = notification.Title;
+            notifyIcon.BalloonTipText = notification.Body;
+            notifyIcon.BalloonTipIcon = notification.Title.Contains("失败", StringComparison.Ordinal)
+                ? ToolTipIcon.Error
+                : ToolTipIcon.Info;
+            notifyIcon.ShowBalloonTip(notification.Silent ? 3000 : 5000);
+        });
     }
 
     private void ApplyState(JsonObject next)
@@ -893,6 +915,8 @@ internal sealed class MinimalMainForm : Form
 
     private void DisposeNativeResources()
     {
+        client.StateChanged -= OnStateChanged;
+        client.NotificationReceived -= OnNotificationReceived;
         searchTimer.Dispose();
         catalogRetryTimer.Dispose();
         notifyIcon.Dispose();

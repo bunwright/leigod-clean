@@ -9,6 +9,7 @@ const {
   evaluateAutoWatchState,
   GameLifecycleTracker,
   resolveAutoGameIds,
+  resolveTrackedGameIds,
   selectAutoEventGames,
 } = require('../auto-acceleration.cjs');
 
@@ -242,6 +243,35 @@ test('the global switch covers configured, local, and recent games', () => {
     autoAccelerateGames: { 42: true },
     gameSelections: { 43: { areaId: 1 }, invalid: {} },
   }, [{ id: 44 }, 45, '43', 0, 'invalid']), ['42', '43', '44', '45']);
+});
+
+test('notifications track discovered games independently of automatic acceleration', () => {
+  assert.deepEqual(resolveTrackedGameIds({
+    notificationsEnabled: true,
+    autoAccelerationEnabled: false,
+    autoAccelerateGames: {},
+  }, [{ id: 42 }, '43', 42]), ['42', '43']);
+});
+
+test('tracking falls back to automatic targets when notifications are disabled', () => {
+  assert.deepEqual(resolveTrackedGameIds({
+    notificationsEnabled: false,
+    autoAccelerationEnabled: false,
+    autoAccelerateGames: { 42: true },
+  }, [43]), ['42']);
+  assert.deepEqual(resolveTrackedGameIds({
+    notificationsEnabled: false,
+    autoAccelerationEnabled: false,
+    autoAccelerateGames: {},
+  }, [43]), []);
+});
+
+test('notification and automatic targets are deduplicated in stable order', () => {
+  assert.deepEqual(resolveTrackedGameIds({
+    notificationsEnabled: true,
+    autoAccelerationEnabled: false,
+    autoAccelerateGames: { 42: true },
+  }, [43, 42, 44]), ['42', '43', '44']);
 });
 
 test('a global candidate can use the first playable area and sub-area', () => {

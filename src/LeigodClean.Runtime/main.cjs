@@ -30,6 +30,7 @@ module.exports = function startLeigodClean(officialRequire) {
     evaluateAutoWatchState,
     GameLifecycleTracker,
     resolveAutoGameIds,
+    resolveTrackedGameIds,
     selectAutoEventGames,
   } = require('./auto-acceleration.cjs');
   const {
@@ -147,7 +148,7 @@ module.exports = function startLeigodClean(officialRequire) {
     onStopped: (_gameId, game) => notifyGameLifecycle(game, 'stopped'),
   });
   const autoEvaluationQueue = new AutoEvaluationQueue({
-    getOrder: () => resolveAutoGameIds(settings, autoCandidateIds),
+    getOrder: () => resolveTrackedGameIds(settings, autoCandidateIds),
     evaluate: (gameId, allowSwitch, lifecycleKind) =>
       evaluateAutoGame(gameId, allowSwitch, lifecycleKind),
     canContinue: () => !closing,
@@ -651,9 +652,7 @@ module.exports = function startLeigodClean(officialRequire) {
       await performPause('manual-pause');
     } catch (error) {
       log(`Tray pause failed: ${messageOf(error)}`);
-      if (Notification.isSupported()) {
-        new Notification({ title: 'LeigodClean', body: messageOf(error), icon: appIcon }).show();
-      }
+      showSystemNotification(messageOf(error), { silent: false });
     }
   }
 
@@ -687,11 +686,39 @@ module.exports = function startLeigodClean(officialRequire) {
   }
 
   function showSystemNotification(body, { title = 'LeigodClean', silent = true } = {}) {
-    if (!settings.notificationsEnabled || !Notification.isSupported?.()) {
+    if (!settings.notificationsEnabled) {
+      log(`Notification skipped: disabled title=${title}`);
       return false;
     }
-    new Notification({ title, body, icon: appIcon, silent }).show();
-    return true;
+    const notification = {
+      title: String(title),
+      body: String(body),
+      silent: silent !== false,
+    };
+    if (nativeMode) {
+      const recipients = nativePipe?.broadcastNotification(notification) ?? 0;
+      if (recipients > 0) {
+        log(`Notification requested: channel=native recipients=${recipients} title=${notification.title}`);
+        return true;
+      }
+      log(`Notification native recipient unavailable; falling back to Electron title=${notification.title}`);
+    }
+    if (!Notification.isSupported?.()) {
+      log(`Notification skipped: Electron notifications unsupported title=${notification.title}`);
+      return false;
+    }
+    try {
+      const systemNotification = new Notification({ ...notification, icon: appIcon });
+      systemNotification.on?.('failed', (_event, error) => {
+        log(`Notification delivery failed: title=${notification.title} error=${messageOf(error)}`);
+      });
+      systemNotification.show();
+      log(`Notification requested: channel=electron title=${notification.title}`);
+      return true;
+    } catch (error) {
+      log(`Notification request failed: title=${notification.title} error=${messageOf(error)}`);
+      return false;
+    }
   }
 
   function rememberGameSummary(gameId, title) {
@@ -1128,7 +1155,8 @@ module.exports = function startLeigodClean(officialRequire) {
         return;
       }
       acceptOfficialState(update?.state);
-      if (update?.heartbeat && settings.autoAccelerationEnabled &&
+      if (update?.heartbeat &&
+        (settings.autoAccelerationEnabled || settings.notificationsEnabled) &&
         Date.now() - autoCandidatesLoadedAt >= 5 * 60 * 1000) {
         void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
       }
@@ -1236,10 +1264,10 @@ module.exports = function startLeigodClean(officialRequire) {
       });
     }
 
-    const hasAutomaticTargets = settings.autoAccelerationEnabled ||
+    const hasTrackedTargets = settings.notificationsEnabled || settings.autoAccelerationEnabled ||
       Object.keys(settings.autoAccelerateGames).length > 0;
     if ((kind === 'started' || fullSnapshot) && hasProcessChanges &&
-      hasAutomaticTargets && gameIds.size === 0 &&
+      hasTrackedTargets && gameIds.size === 0 &&
       (autoUnresolvedGameIds.size > 0 ||
         Date.now() - autoCandidatesLoadedAt >= 5 * 60 * 1000)) {
       if (kind === 'started') {
@@ -1338,8 +1366,10 @@ module.exports = function startLeigodClean(officialRequire) {
   async function refreshAutoAccelerationIndex({ forceCandidates = false, evaluate = false } = {}) {
     const dedicatedGameIds = resolveAutoGameIds(settings);
     const hasGlobalTargets = settings.autoAccelerationEnabled === true;
-    if ((!hasGlobalTargets && dedicatedGameIds.length === 0) || !lastOfficialState.ready) {
-      if (!hasGlobalTargets && dedicatedGameIds.length === 0) {
+    const tracksNotifications = settings.notificationsEnabled === true;
+    const hasTrackedTargets = tracksNotifications || hasGlobalTargets || dedicatedGameIds.length > 0;
+    if (!hasTrackedTargets || !lastOfficialState.ready) {
+      if (!hasTrackedTargets) {
         resetAutoAccelerationIndex(true);
       }
       return;
@@ -1349,7 +1379,7 @@ module.exports = function startLeigodClean(officialRequire) {
       const pendingGeneration = autoIndexGeneration;
       await pendingIndex;
       if (evaluate && pendingGeneration === autoIndexGeneration) {
-        queueAutoEvaluation(resolveAutoGameIds(settings, autoCandidateIds));
+        queueAutoEvaluation(resolveTrackedGameIds(settings, autoCandidateIds));
       }
       if (pendingGeneration === autoIndexGeneration) {
         replayPendingAutoStarts();
@@ -1361,7 +1391,7 @@ module.exports = function startLeigodClean(officialRequire) {
     const buildPromise = (async () => {
       if (forceCandidates || autoCandidatesLoadedAt === 0) {
         let discovered = [];
-        if (hasGlobalTargets) {
+        if (hasGlobalTargets || tracksNotifications) {
           try {
             discovered = await bridge.call('autoCandidates');
           } catch (error) {
@@ -1383,7 +1413,7 @@ module.exports = function startLeigodClean(officialRequire) {
         if (generation !== autoIndexGeneration) {
           return;
         }
-        autoCandidateIds = hasGlobalTargets
+        autoCandidateIds = hasGlobalTargets || tracksNotifications
           ? [
             ...(Array.isArray(discovered) ? discovered : []),
             ...localGames.map((game) => game.id),
@@ -1402,7 +1432,7 @@ module.exports = function startLeigodClean(officialRequire) {
         autoCandidatesLoadedAt = Date.now();
       }
 
-      const gameIds = resolveAutoGameIds(settings, autoCandidateIds);
+      const gameIds = resolveTrackedGameIds(settings, autoCandidateIds);
       const explicitGameIds = new Set([
         ...Object.keys(settings.autoAccelerateGames),
         ...Object.keys(settings.gameSelections),
@@ -1502,7 +1532,7 @@ module.exports = function startLeigodClean(officialRequire) {
   async function evaluateAutoGame(gameId, allowSwitch = false, lifecycleKind = '') {
     const game = autoGameCache.get(gameId);
     if (!game || !processEvents?.snapshot.ready ||
-      !resolveAutoGameIds(settings, autoCandidateIds).includes(gameId)) {
+      !resolveTrackedGameIds(settings, autoCandidateIds).includes(gameId)) {
       return false;
     }
     try {
@@ -1513,6 +1543,11 @@ module.exports = function startLeigodClean(officialRequire) {
         running,
         lifecycleKind,
       );
+      const automaticEnabled = resolveAutoGameIds(settings, autoCandidateIds).includes(gameId);
+      if (!automaticEnabled) {
+        clearAutoRetry(gameId);
+        return false;
+      }
       if (lifecycleTransition === 'started' && !lastOfficialState.isLogin) {
         showSystemNotification('请先登录雷神账户，再使用自动加速。', {
           title: 'LeigodClean 自动加速失败',
@@ -1720,13 +1755,8 @@ module.exports = function startLeigodClean(officialRequire) {
       const result = await bridge.call('pause', { compact: nativeMode });
       acceptOfficialState(result);
       monitoredGameId = '';
-      if (reason !== 'manual-pause' && settings.notificationsEnabled && Notification.isSupported()) {
-        new Notification({
-          title: 'LeigodClean',
-          body: '未检测到游戏进程，已暂停加速时长。',
-          icon: appIcon,
-          silent: false,
-        }).show();
+      if (reason !== 'manual-pause') {
+        showSystemNotification('未检测到游戏进程，已暂停加速时长。', { silent: false });
       }
       return combinedState();
     } finally {
@@ -1939,7 +1969,8 @@ module.exports = function startLeigodClean(officialRequire) {
       log('Official client state ready');
       void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
       void refreshTrayRecentGames();
-    } else if (lastOfficialState.ready && settings.autoAccelerationEnabled && gameId &&
+    } else if (lastOfficialState.ready &&
+      (settings.autoAccelerationEnabled || settings.notificationsEnabled) && gameId &&
       !autoCandidateIds.map(String).includes(gameId)) {
       autoCandidateIds = [gameId, ...autoCandidateIds];
       void refreshAutoAccelerationIndex({ evaluate: true });
@@ -1948,7 +1979,7 @@ module.exports = function startLeigodClean(officialRequire) {
       ((!previous.isLogin && lastOfficialState.isLogin) ||
         (previous.accStatus !== 'normal' && lastOfficialState.accStatus === 'normal') ||
         String(previous.gameId || '') !== gameId)) {
-      queueAutoEvaluation(resolveAutoGameIds(settings, autoCandidateIds));
+      queueAutoEvaluation(resolveTrackedGameIds(settings, autoCandidateIds));
     }
     if (lastOfficialState.ready && String(previous.gameId || '') !== gameId) {
       void refreshTrayRecentGames();
@@ -1990,6 +2021,7 @@ module.exports = function startLeigodClean(officialRequire) {
       automaticAcceleration: {
         globalEnabled: settings.autoAccelerationEnabled,
         configuredGameIds: resolveAutoGameIds(settings, autoCandidateIds),
+        trackedGameIds: resolveTrackedGameIds(settings, autoCandidateIds),
         candidateCount: autoCandidateIds.length,
         indexedProcessCount: autoProcessIndex.size,
         indexedLocationCount: autoGameLocations.size,

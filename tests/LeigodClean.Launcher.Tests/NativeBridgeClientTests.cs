@@ -48,4 +48,41 @@ public sealed class NativeBridgeClientTests
         Assert.True((await stateReceived.Task.WaitAsync(TimeSpan.FromSeconds(5)))["client"]?["ready"]?.GetValue<bool>());
         await serverTask;
     }
+
+    [Fact]
+    public async Task RaisesNativeNotificationEvents()
+    {
+        var options = new NativeBridgeOptions(
+            $"LeigodClean-notification-{Guid.NewGuid():N}",
+            new string('b', 64));
+        using var server = new NamedPipeServerStream(
+            options.PipeName,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous);
+        Task serverTask = Task.Run(async () =>
+        {
+            await server.WaitForConnectionAsync();
+            await using var writer = new StreamWriter(server, new UTF8Encoding(false), 1024, true)
+            {
+                AutoFlush = true,
+                NewLine = "\n",
+            };
+            await writer.WriteLineAsync(
+                "{\"type\":\"notification\",\"data\":{\"title\":\"LeigodClean\",\"body\":\"游戏已启动。\",\"silent\":false}}");
+        });
+
+        var received = new TaskCompletionSource<NativeNotificationEventArgs>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = new NativeBridgeClient(options);
+        client.NotificationReceived += (_, notification) => received.TrySetResult(notification);
+        await client.ConnectAsync(TimeSpan.FromSeconds(5));
+
+        NativeNotificationEventArgs notification = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("LeigodClean", notification.Title);
+        Assert.Equal("游戏已启动。", notification.Body);
+        Assert.False(notification.Silent);
+        await serverTask;
+    }
 }

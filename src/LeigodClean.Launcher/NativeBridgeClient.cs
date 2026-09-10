@@ -23,6 +23,8 @@ internal sealed class NativeBridgeClient : IAsyncDisposable
 
     internal event EventHandler<JsonObject>? StateChanged;
 
+    internal event EventHandler<NativeNotificationEventArgs>? NotificationReceived;
+
     internal bool IsConnected => pipe?.IsConnected == true;
 
     internal async Task ConnectAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
@@ -122,6 +124,15 @@ internal sealed class NativeBridgeClient : IAsyncDisposable
                     StateChanged?.Invoke(this, state);
                     continue;
                 }
+                if (message?["type"]?.GetValue<string>() == "notification" &&
+                    message["data"] is JsonObject notification)
+                {
+                    NotificationReceived?.Invoke(this, new NativeNotificationEventArgs(
+                        notification["title"]?.GetValue<string>() ?? "LeigodClean",
+                        notification["body"]?.GetValue<string>() ?? string.Empty,
+                        notification["silent"]?.GetValue<bool>() != false));
+                    continue;
+                }
                 int id = message?["id"]?.GetValue<int>() ?? 0;
                 if (id <= 0 || !pending.TryGetValue(id, out TaskCompletionSource<JsonNode?>? completion))
                 {
@@ -171,3 +182,12 @@ internal sealed class NativeBridgeClient : IAsyncDisposable
 }
 
 internal sealed class NativeBridgeException(string message) : Exception(message);
+
+internal sealed class NativeNotificationEventArgs(string title, string body, bool silent) : EventArgs
+{
+    internal string Title { get; } = title;
+
+    internal string Body { get; } = body;
+
+    internal bool Silent { get; } = silent;
+}

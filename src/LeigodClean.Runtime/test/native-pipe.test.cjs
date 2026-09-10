@@ -99,3 +99,59 @@ test('native pipe authenticates and returns newline-delimited responses', async 
     server.close();
   }
 });
+
+test('native pipe broadcasts notifications to connected clients', async () => {
+  const pipeName = `LeigodClean-notification-${process.pid}-${Date.now()}`;
+  const token = 'c'.repeat(64);
+  const server = createNativePipeServer({
+    pipeName,
+    token,
+    initialState: () => ({ client: { ready: true }, settings: {} }),
+    invoke: async () => null,
+  });
+  const socket = net.createConnection(`\\\\.\\pipe\\${pipeName}`);
+  socket.setEncoding('utf8');
+  try {
+    await new Promise((resolve, reject) => {
+      socket.once('connect', resolve);
+      socket.once('error', reject);
+    });
+    let resolveInitialState;
+    const initialState = new Promise((resolve) => { resolveInitialState = resolve; });
+    const notification = new Promise((resolve, reject) => {
+      let buffer = '';
+      socket.on('data', (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf('\n')) >= 0) {
+          const message = JSON.parse(buffer.slice(0, newline));
+          buffer = buffer.slice(newline + 1);
+          if (message.type === 'state') {
+            resolveInitialState(message);
+          }
+          if (message.type === 'notification') {
+            resolve(message);
+          }
+        }
+      });
+      socket.once('error', reject);
+    });
+    await initialState;
+    assert.equal(server.broadcastNotification({
+      title: 'LeigodClean',
+      body: '检测到游戏已启动。',
+      silent: false,
+    }), 1);
+    assert.deepEqual(await notification, {
+      type: 'notification',
+      data: {
+        title: 'LeigodClean',
+        body: '检测到游戏已启动。',
+        silent: false,
+      },
+    });
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});

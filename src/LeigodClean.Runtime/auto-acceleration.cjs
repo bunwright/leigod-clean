@@ -256,6 +256,17 @@ function resolveAutoGameIds(settings = {}, discoveredGameIds = []) {
   return result.slice(0, 500);
 }
 
+function resolveTrackedGameIds(settings = {}, discoveredGameIds = []) {
+  const automaticGameIds = resolveAutoGameIds(settings, discoveredGameIds);
+  if (settings?.notificationsEnabled !== true) {
+    return automaticGameIds;
+  }
+  return uniqueGameIds([
+    ...automaticGameIds,
+    ...(Array.isArray(discoveredGameIds) ? discoveredGameIds : []),
+  ]).slice(0, 500);
+}
+
 function defaultAutoSelection(game) {
   const area = Array.isArray(game?.areas)
     ? game.areas.find((item) => Number.isSafeInteger(Number(item?.id)) && Number(item.id) >= 0)
@@ -314,5 +325,6 @@ module.exports = {
   evaluateAutoWatchState,
   GameLifecycleTracker,
   resolveAutoGameIds,
+  resolveTrackedGameIds,
   selectAutoEventGames,
 };
