@@ -61,7 +61,7 @@ internal sealed class FirstRunModeForm : Form
         ShowInTaskbar = true;
         BackColor = MinimalTheme.Canvas;
         ForeColor = MinimalTheme.Text;
-        ClientSize = new Size(720, 454);
+        ClientSize = new Size(820, 520);
 
         regularChoice = new ModeChoiceButton(
             "常规模式",
@@ -72,7 +72,7 @@ internal sealed class FirstRunModeForm : Form
             "极简模式",
             "原生低占用",
             "使用 Windows 原生控件，只保留加速所需功能。",
-            ["不绘制网页界面", "不采集会话指标", "更少内存与 CPU 占用"]);
+            ["操作更专注", "不采集会话指标", "更少内存与 CPU 占用"]);
         regularChoice.Click += (_, _) => SelectMode(useMinimalMode: false);
         minimalChoice.Click += (_, _) => SelectMode(useMinimalMode: true);
         regularChoice.DoubleClick += (_, _) => AcceptMode(useMinimalMode: false);
@@ -91,9 +91,9 @@ internal sealed class FirstRunModeForm : Form
             RowCount = 3,
             Padding = new Padding(28, 22, 28, 0),
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
         root.Controls.Add(BuildHeading(), 0, 0);
         root.Controls.Add(BuildChoices(), 0, 1);
         root.Controls.Add(BuildFooter(), 0, 2);
@@ -230,6 +230,7 @@ internal sealed class ModeChoiceButton : Button
     protected override void OnPaint(PaintEventArgs eventArgs)
     {
         eventArgs.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        eventArgs.Graphics.Clear(Parent?.BackColor ?? MinimalTheme.Canvas);
         Rectangle card = Rectangle.Inflate(ClientRectangle, -2, -2);
         using GraphicsPath cardPath = RoundedRectangle(card, 16);
         using var surface = new SolidBrush(selected ? MinimalTheme.AccentSoft : MinimalTheme.Surface);

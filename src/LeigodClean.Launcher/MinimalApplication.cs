@@ -239,8 +239,8 @@ internal sealed class MinimalMainForm : Form
         Font = new Font("Segoe UI", 9.5F);
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(760, 520);
-        ClientSize = new Size(900, 580);
+        MinimumSize = new Size(820, 580);
+        ClientSize = new Size(960, 620);
         FormBorderStyle = FormBorderStyle.Sizable;
         BackColor = MinimalTheme.Canvas;
         ForeColor = MinimalTheme.Text;
@@ -250,7 +250,7 @@ internal sealed class MinimalMainForm : Form
         {
             Dock = DockStyle.Fill,
             FixedPanel = FixedPanel.Panel1,
-            Size = new Size(900, 470),
+            Size = new Size(960, 510),
             SplitterDistance = 280,
             SplitterWidth = 1,
             Panel1MinSize = 240,
@@ -356,7 +356,7 @@ internal sealed class MinimalMainForm : Form
             RowCount = 1,
             Margin = Padding.Empty,
         };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 184));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
@@ -503,8 +503,10 @@ internal sealed class MinimalMainForm : Form
         selectionHint.ForeColor = MinimalTheme.SecondaryText;
         selectionHint.Dock = DockStyle.Fill;
         selectionHint.AutoSize = false;
+        selectionHint.AutoEllipsis = false;
+        selectionHint.Margin = Padding.Empty;
         selectionHint.TextAlign = ContentAlignment.TopLeft;
-        selectionHint.Padding = new Padding(0, 12, 0, 0);
+        selectionHint.Padding = new Padding(0, 10, 0, 0);
         table.Controls.Add(selectionHint, 1, 5);
         var buttonPanel = new FlowLayoutPanel
         {
