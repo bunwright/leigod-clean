@@ -13,12 +13,19 @@ internal static class Program
     private static int Main(string[] args)
     {
         AppLog.Initialize();
+        bool diagnosticMode = args.Contains("--minimal-ui-smoke-test", StringComparer.OrdinalIgnoreCase) ||
+            args.Contains("--minimal-ui-preview", StringComparer.OrdinalIgnoreCase);
 
         try
         {
             if (args.Contains("--minimal-ui-smoke-test", StringComparer.OrdinalIgnoreCase))
             {
                 return MinimalApplication.SmokeTest();
+            }
+            if (args.Length >= 2 &&
+                string.Equals(args[0], "--minimal-ui-preview", StringComparison.OrdinalIgnoreCase))
+            {
+                return MinimalApplication.RenderPreview(args[1]);
             }
 
             WaitForRestartTarget(args);
@@ -64,7 +71,10 @@ internal static class Program
         catch (Exception exception)
         {
             AppLog.Error("Launcher failed", exception);
-            NativeDialog.Error("LeigodClean", exception.Message);
+            if (!diagnosticMode)
+            {
+                NativeDialog.Error("LeigodClean", exception.Message);
+            }
             return 1;
         }
     }
@@ -93,6 +103,7 @@ internal static class Program
 
     private static void LaunchClient(string installRoot, bool startInBackground)
     {
+        InitialModeSelector.EnsureSelected();
         if (!MinimalModeSettings.IsEnabled())
         {
             OfficialClientLauncher.Launch(installRoot, startInBackground);

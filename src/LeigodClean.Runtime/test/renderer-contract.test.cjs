@@ -131,7 +131,8 @@ test('primary acceleration control and switchable telemetry occupy the game work
   );
   assert.match(styles, /\.telemetry-canvas-wrap\s*\{[^}]*height:\s*96px/isu);
   assert.match(styles, /\.panel\s*\{[^}]*height:\s*520px[^}]*min-height:\s*520px/isu);
-  assert.match(styles, /\.content\s*\{[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*scroll[^}]*scrollbar-gutter:\s*stable/isu);
+  assert.match(styles, /\.content\s*\{[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*auto/isu);
+  assert.doesNotMatch(styles, /scrollbar-gutter:\s*stable/isu);
   assert.match(styles, /\.process-overview\s*\{[^}]*min-width:\s*0[^}]*overflow:\s*hidden/isu);
   assert.match(styles, /\.metric-switcher\s*\{[^}]*grid-template-columns:\s*repeat\(2/isu);
   assert.match(styles, /\.session-panel\.charting \.telemetry-focus\s*\{[^}]*flex:\s*1 1 0[^}]*min-height:\s*0/isu);
@@ -227,6 +228,7 @@ test('global and per-game automatic acceleration rules are independent', () => {
   assert.match(html, /单独启用的游戏不受此开关影响/u);
   assert.match(script, /关闭全局开关后仍然生效/u);
   assert.match(mainRuntime, /resolveAutoGameIds\(settings, autoCandidateIds\)/u);
+  assert.doesNotMatch(mainRuntime, /resolveTrackedGameIds/u);
   assert.match(mainRuntime, /bridge\.call\('autoCandidates'\)/u);
   assert.doesNotMatch(
     mainRuntime,
@@ -238,6 +240,7 @@ test('global and per-game automatic acceleration rules are independent', () => {
   assert.match(mainRuntime, /event\.processes/u);
   assert.match(mainRuntime, /explicitGameIds\.has\(gameId\)/u);
   assert.match(mainRuntime, /autoLocalProcesses/u);
+  assert.match(mainRuntime, /进程：\$\{process\}/u);
   assert.match(
     script,
     /autoAccelerationInput\.addEventListener\('change', \(\) => void setGlobalAutoAcceleration\(\)\)/u,

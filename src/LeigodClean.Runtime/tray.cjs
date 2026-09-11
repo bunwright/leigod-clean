@@ -37,7 +37,6 @@ function buildTrayMenuTemplate({
 } = {}) {
   const name = String(application.name || 'LeigodClean');
   const version = String(application.version || '').trim();
-  const clientVersion = String(client.clientVersion || '').trim();
   const connected = client.connected === true && client.ready === true;
   const loggedIn = connected && client.isLogin === true;
   const active = connected && isAccelerationActive(client);
@@ -65,7 +64,7 @@ function buildTrayMenuTemplate({
     { label: `${name}${version ? `  v${version}` : ''}`, enabled: false },
     {
       label: connected
-        ? `${loggedIn ? '已登录' : '未登录'}${clientVersion ? ` · 雷神 ${clientVersion}` : ''}`
+        ? (loggedIn ? '已登录' : '未登录')
         : '客户端未连接',
       enabled: false,
     },

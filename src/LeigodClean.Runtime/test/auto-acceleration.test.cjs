@@ -9,7 +9,6 @@ const {
   evaluateAutoWatchState,
   GameLifecycleTracker,
   resolveAutoGameIds,
-  resolveTrackedGameIds,
   selectAutoEventGames,
 } = require('../auto-acceleration.cjs');
 
@@ -78,14 +77,35 @@ test('forwards lifecycle metadata without changing switch serialization', async 
   ]);
 });
 
+test('forwards the matched process name with lifecycle events', async () => {
+  const calls = [];
+  const queue = new AutoEvaluationQueue({
+    getOrder: () => ['42'],
+    evaluate: async (...args) => {
+      calls.push(args);
+      return false;
+    },
+  });
+
+  await queue.enqueue(['42'], {
+    allowSwitch: true,
+    lifecycleKind: 'started',
+    processNames: new Map([['42', 'game.exe']]),
+  });
+
+  assert.deepEqual(calls, [['42', true, 'started', 'game.exe']]);
+});
+
 test('announces lifecycle edges immediately while suppressing launcher handoff exits', async () => {
   const scheduled = [];
   const events = [];
   let running = true;
   const tracker = new GameLifecycleTracker({
     isRunning: () => running,
-    onStarted: (_gameId, game) => events.push(`started:${game.title}`),
-    onStopped: (_gameId, game) => events.push(`stopped:${game.title}`),
+    onStarted: (_gameId, game, processName) =>
+      events.push(`started:${game.title}:${processName}`),
+    onStopped: (_gameId, game, processName) =>
+      events.push(`stopped:${game.title}:${processName}`),
     schedule(callback) {
       const handle = { callback, cancelled: false, unref() {} };
       scheduled.push(handle);
@@ -97,24 +117,27 @@ test('announces lifecycle edges immediately while suppressing launcher handoff e
   });
   const game = { title: 'Test Game' };
 
-  tracker.observe('42', game, true, 'started');
-  tracker.observe('42', game, false, 'stopped');
-  tracker.observe('42', game, true, 'started');
+  tracker.observe('42', game, true, 'started', 'launcher.exe');
+  tracker.observe('42', game, false, 'stopped', 'launcher.exe');
+  tracker.observe('42', game, true, 'started', 'game.exe');
   assert.equal(scheduled[0].cancelled, true);
-  assert.deepEqual(events, ['started:Test Game']);
+  assert.deepEqual(events, ['started:Test Game:launcher.exe']);
 
   running = false;
-  tracker.observe('42', game, false, 'stopped');
+  tracker.observe('42', game, false, 'stopped', 'game.exe');
   scheduled[1].callback();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(events, ['started:Test Game', 'stopped:Test Game']);
+  assert.deepEqual(events, [
+    'started:Test Game:launcher.exe',
+    'stopped:Test Game:game.exe',
+  ]);
 
   running = true;
-  tracker.observe('42', game, true, 'started');
+  tracker.observe('42', game, true, 'started', 'game.exe');
   assert.deepEqual(events, [
-    'started:Test Game',
-    'stopped:Test Game',
-    'started:Test Game',
+    'started:Test Game:launcher.exe',
+    'stopped:Test Game:game.exe',
+    'started:Test Game:game.exe',
   ]);
 });
 
@@ -245,33 +268,12 @@ test('the global switch covers configured, local, and recent games', () => {
   }, [{ id: 44 }, 45, '43', 0, 'invalid']), ['42', '43', '44', '45']);
 });
 
-test('notifications track discovered games independently of automatic acceleration', () => {
-  assert.deepEqual(resolveTrackedGameIds({
+test('notifications alone do not add automatic lifecycle targets', () => {
+  assert.deepEqual(resolveAutoGameIds({
     notificationsEnabled: true,
     autoAccelerationEnabled: false,
     autoAccelerateGames: {},
-  }, [{ id: 42 }, '43', 42]), ['42', '43']);
-});
-
-test('tracking falls back to automatic targets when notifications are disabled', () => {
-  assert.deepEqual(resolveTrackedGameIds({
-    notificationsEnabled: false,
-    autoAccelerationEnabled: false,
-    autoAccelerateGames: { 42: true },
-  }, [43]), ['42']);
-  assert.deepEqual(resolveTrackedGameIds({
-    notificationsEnabled: false,
-    autoAccelerationEnabled: false,
-    autoAccelerateGames: {},
-  }, [43]), []);
-});
-
-test('notification and automatic targets are deduplicated in stable order', () => {
-  assert.deepEqual(resolveTrackedGameIds({
-    notificationsEnabled: true,
-    autoAccelerationEnabled: false,
-    autoAccelerateGames: { 42: true },
-  }, [43, 42, 44]), ['42', '43', '44']);
+  }, [{ id: 42 }, '43']), []);
 });
 
 test('a global candidate can use the first playable area and sub-area', () => {

@@ -11,10 +11,11 @@ const product = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'product.j
 
 test('release notes are extracted from exactly one changelog version', () => {
   const notes = extractReleaseNotes(changelog, `v${product.version}`);
-  assert.match(notes, /已安装及最近游戏不再触发启动、结束通知/u);
+  assert.match(notes, /实际命中的进程名/u);
+  assert.match(notes, /首次启动时提供原生界面模式选择/u);
+  assert.match(notes, /极简模式的原生界面层级/u);
+  assert.doesNotMatch(notes, /已安装及最近游戏不再触发启动、结束通知/u);
   assert.doesNotMatch(notes, /840 像素/u);
-  assert.doesNotMatch(notes, /增加可选的极简模式/u);
-  assert.doesNotMatch(notes, /官方状态已就绪后被错误重置/u);
   assert.match(notes, /blob\/main\/CHANGELOG\.md/u);
 });
 

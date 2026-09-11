@@ -30,7 +30,6 @@ module.exports = function startLeigodClean(officialRequire) {
     evaluateAutoWatchState,
     GameLifecycleTracker,
     resolveAutoGameIds,
-    resolveTrackedGameIds,
     selectAutoEventGames,
   } = require('./auto-acceleration.cjs');
   const {
@@ -144,13 +143,13 @@ module.exports = function startLeigodClean(officialRequire) {
   let autoIndexRefreshTimer = null;
   const gameLifecycleTracker = new GameLifecycleTracker({
     isRunning: (gameId, game) => isAutoGameRunning(gameId, game),
-    onStarted: (_gameId, game) => notifyGameLifecycle(game, 'started'),
-    onStopped: (_gameId, game) => notifyGameLifecycle(game, 'stopped'),
+    onStarted: (_gameId, game, processName) => notifyGameLifecycle(game, 'started', processName),
+    onStopped: (_gameId, game, processName) => notifyGameLifecycle(game, 'stopped', processName),
   });
   const autoEvaluationQueue = new AutoEvaluationQueue({
-    getOrder: () => resolveTrackedGameIds(settings, autoCandidateIds),
-    evaluate: (gameId, allowSwitch, lifecycleKind) =>
-      evaluateAutoGame(gameId, allowSwitch, lifecycleKind),
+    getOrder: () => resolveAutoGameIds(settings, autoCandidateIds),
+    evaluate: (gameId, allowSwitch, lifecycleKind, processName) =>
+      evaluateAutoGame(gameId, allowSwitch, lifecycleKind, processName),
     canContinue: () => !closing,
     onError: (error) => log(`Automatic acceleration queue failed: ${messageOf(error)}`),
   });
@@ -1155,8 +1154,7 @@ module.exports = function startLeigodClean(officialRequire) {
         return;
       }
       acceptOfficialState(update?.state);
-      if (update?.heartbeat &&
-        (settings.autoAccelerationEnabled || settings.notificationsEnabled) &&
+      if (update?.heartbeat && settings.autoAccelerationEnabled &&
         Date.now() - autoCandidatesLoadedAt >= 5 * 60 * 1000) {
         void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
       }
@@ -1221,37 +1219,14 @@ module.exports = function startLeigodClean(officialRequire) {
       return;
     }
 
-    const nameGameIds = new Set();
-    const locationGameIds = new Set();
-    const changedProcesses = normalizeProcesses(names);
-    const processDetails = Array.isArray(processes) ? processes : [];
-    const hasProcessChanges = changedProcesses.length > 0 || processDetails.length > 0;
-    const eventProcessNames = normalizeProcesses([
-      ...changedProcesses,
-      ...processDetails.map((process) => process?.name),
-    ]);
-    for (const processName of eventProcessNames) {
-      for (const gameId of autoProcessIndex.get(processKey(processName)) ?? []) {
-        nameGameIds.add(gameId);
-      }
-    }
-    for (const process of processDetails) {
-      for (const [gameId, locations] of autoGameLocations) {
-        if (autoGameCache.has(gameId) &&
-          executableMatchesLocations(process?.path, locations)) {
-          locationGameIds.add(gameId);
-        }
-      }
-    }
-    const matched = selectAutoEventGames(nameGameIds, locationGameIds, {
-      accelerating: lastOfficialState.accStatus !== 'normal',
-      activeGameId: lastOfficialState.gameId,
-    });
+    const eventMatch = matchAutomaticProcessEvent(names, processes);
+    const { matched, processNames, eventProcessNames, processDetails } = eventMatch;
+    const hasProcessChanges = eventProcessNames.length > 0 || processDetails.length > 0;
     const gameIds = new Set(matched.gameIds);
     if (kind === 'started' && matched.activeHandoff) {
       // Launcher-to-game handoffs often share process aliases with regional catalog
       // entries. A process belonging to the active game must not switch variants.
-      queueAutoEvaluation(matched.gameIds, { lifecycleKind: 'started' });
+      queueAutoEvaluation(matched.gameIds, { lifecycleKind: 'started', processNames });
       return;
     }
     if (gameIds.size > 0) {
@@ -1261,13 +1236,14 @@ module.exports = function startLeigodClean(officialRequire) {
       queueAutoEvaluation(gameIds, {
         allowSwitch: kind === 'started',
         lifecycleKind: kind === 'started' || kind === 'stopped' ? kind : '',
+        processNames,
       });
     }
 
-    const hasTrackedTargets = settings.notificationsEnabled || settings.autoAccelerationEnabled ||
+    const hasAutomaticTargets = settings.autoAccelerationEnabled ||
       Object.keys(settings.autoAccelerateGames).length > 0;
     if ((kind === 'started' || fullSnapshot) && hasProcessChanges &&
-      hasTrackedTargets && gameIds.size === 0 &&
+      hasAutomaticTargets && gameIds.size === 0 &&
       (autoUnresolvedGameIds.size > 0 ||
         Date.now() - autoCandidatesLoadedAt >= 5 * 60 * 1000)) {
       if (kind === 'started') {
@@ -1280,12 +1256,60 @@ module.exports = function startLeigodClean(officialRequire) {
     }
   }
 
+  function matchAutomaticProcessEvent(namesInput, processesInput) {
+    const processDetails = (Array.isArray(processesInput) ? processesInput : [])
+      .filter((process) => process && typeof process === 'object');
+    const eventProcessNames = normalizeProcesses([
+      ...normalizeProcesses(namesInput),
+      ...processDetails.map((process) => process.name),
+    ]);
+    const nameGameIds = new Set();
+    const locationGameIds = new Set();
+    const nameMatches = new Map();
+    const locationMatches = new Map();
+    for (const processName of eventProcessNames) {
+      for (const gameId of autoProcessIndex.get(processKey(processName)) ?? []) {
+        nameGameIds.add(gameId);
+        if (!nameMatches.has(gameId)) {
+          nameMatches.set(gameId, processName);
+        }
+      }
+    }
+    for (const process of processDetails) {
+      const processName = normalizeProcesses([
+        process.name,
+        path.win32.basename(String(process.path ?? '')),
+      ])[0] ?? '';
+      for (const [gameId, locations] of autoGameLocations) {
+        if (autoGameCache.has(gameId) &&
+          executableMatchesLocations(process.path, locations)) {
+          locationGameIds.add(gameId);
+          if (processName && !locationMatches.has(gameId)) {
+            locationMatches.set(gameId, processName);
+          }
+        }
+      }
+    }
+    const matched = selectAutoEventGames(nameGameIds, locationGameIds, {
+      accelerating: lastOfficialState.accStatus !== 'normal',
+      activeGameId: lastOfficialState.gameId,
+    });
+    const processNames = new Map(matched.gameIds.map((gameId) => [
+      gameId,
+      locationMatches.get(gameId) ?? nameMatches.get(gameId) ?? eventProcessNames[0] ?? '',
+    ]));
+    return { matched, processNames, eventProcessNames, processDetails };
+  }
+
   function rememberPendingAutoStart(namesInput, sequence, processes) {
     const names = normalizeProcesses(namesInput);
     const details = (Array.isArray(processes) ? processes : [])
       .filter((process) => process && typeof process === 'object')
       .slice(0, 32)
-      .map((process) => ({ path: String(process.path ?? '').slice(0, 32767) }));
+      .map((process) => ({
+        name: String(process.name ?? '').slice(0, 260),
+        path: String(process.path ?? '').slice(0, 32767),
+      }));
     if (names.length === 0 && details.length === 0) {
       return;
     }
@@ -1307,32 +1331,18 @@ module.exports = function startLeigodClean(officialRequire) {
       if (event.createdAt < minimumTime) {
         continue;
       }
-      const nameGameIds = new Set();
-      const locationGameIds = new Set();
-      for (const processName of event.names) {
-        for (const gameId of autoProcessIndex.get(processKey(processName)) ?? []) {
-          nameGameIds.add(gameId);
-        }
-      }
-      for (const process of event.processes) {
-        for (const [gameId, locations] of autoGameLocations) {
-          if (autoGameCache.has(gameId) &&
-            executableMatchesLocations(process.path, locations)) {
-            locationGameIds.add(gameId);
-          }
-        }
-      }
-      const matched = selectAutoEventGames(nameGameIds, locationGameIds, {
-        accelerating: lastOfficialState.accStatus !== 'normal',
-        activeGameId: lastOfficialState.gameId,
-      });
+      const { matched, processNames } = matchAutomaticProcessEvent(event.names, event.processes);
       const gameIds = new Set(matched.gameIds);
       if (matched.activeHandoff) {
-        queueAutoEvaluation(matched.gameIds, { lifecycleKind: 'started' });
+        queueAutoEvaluation(matched.gameIds, { lifecycleKind: 'started', processNames });
         continue;
       }
       if (gameIds.size > 0) {
-        queueAutoEvaluation(gameIds, { allowSwitch: true, lifecycleKind: 'started' });
+        queueAutoEvaluation(gameIds, {
+          allowSwitch: true,
+          lifecycleKind: 'started',
+          processNames,
+        });
       }
     }
   }
@@ -1366,10 +1376,8 @@ module.exports = function startLeigodClean(officialRequire) {
   async function refreshAutoAccelerationIndex({ forceCandidates = false, evaluate = false } = {}) {
     const dedicatedGameIds = resolveAutoGameIds(settings);
     const hasGlobalTargets = settings.autoAccelerationEnabled === true;
-    const tracksNotifications = settings.notificationsEnabled === true;
-    const hasTrackedTargets = tracksNotifications || hasGlobalTargets || dedicatedGameIds.length > 0;
-    if (!hasTrackedTargets || !lastOfficialState.ready) {
-      if (!hasTrackedTargets) {
+    if ((!hasGlobalTargets && dedicatedGameIds.length === 0) || !lastOfficialState.ready) {
+      if (!hasGlobalTargets && dedicatedGameIds.length === 0) {
         resetAutoAccelerationIndex(true);
       }
       return;
@@ -1379,7 +1387,7 @@ module.exports = function startLeigodClean(officialRequire) {
       const pendingGeneration = autoIndexGeneration;
       await pendingIndex;
       if (evaluate && pendingGeneration === autoIndexGeneration) {
-        queueAutoEvaluation(resolveTrackedGameIds(settings, autoCandidateIds));
+        queueAutoEvaluation(resolveAutoGameIds(settings, autoCandidateIds));
       }
       if (pendingGeneration === autoIndexGeneration) {
         replayPendingAutoStarts();
@@ -1391,7 +1399,7 @@ module.exports = function startLeigodClean(officialRequire) {
     const buildPromise = (async () => {
       if (forceCandidates || autoCandidatesLoadedAt === 0) {
         let discovered = [];
-        if (hasGlobalTargets || tracksNotifications) {
+        if (hasGlobalTargets) {
           try {
             discovered = await bridge.call('autoCandidates');
           } catch (error) {
@@ -1413,7 +1421,7 @@ module.exports = function startLeigodClean(officialRequire) {
         if (generation !== autoIndexGeneration) {
           return;
         }
-        autoCandidateIds = hasGlobalTargets || tracksNotifications
+        autoCandidateIds = hasGlobalTargets
           ? [
             ...(Array.isArray(discovered) ? discovered : []),
             ...localGames.map((game) => game.id),
@@ -1432,7 +1440,7 @@ module.exports = function startLeigodClean(officialRequire) {
         autoCandidatesLoadedAt = Date.now();
       }
 
-      const gameIds = resolveTrackedGameIds(settings, autoCandidateIds);
+      const gameIds = resolveAutoGameIds(settings, autoCandidateIds);
       const explicitGameIds = new Set([
         ...Object.keys(settings.autoAccelerateGames),
         ...Object.keys(settings.gameSelections),
@@ -1512,8 +1520,11 @@ module.exports = function startLeigodClean(officialRequire) {
     }
   }
 
-  function queueAutoEvaluation(gameIds, { allowSwitch = false, lifecycleKind = '' } = {}) {
-    autoEvaluationQueue.enqueue(gameIds, { allowSwitch, lifecycleKind });
+  function queueAutoEvaluation(
+    gameIds,
+    { allowSwitch = false, lifecycleKind = '', processNames = new Map() } = {},
+  ) {
+    autoEvaluationQueue.enqueue(gameIds, { allowSwitch, lifecycleKind, processNames });
   }
 
   function scheduleAutoIndexRefresh() {
@@ -1529,10 +1540,10 @@ module.exports = function startLeigodClean(officialRequire) {
     autoIndexRefreshTimer?.unref?.();
   }
 
-  async function evaluateAutoGame(gameId, allowSwitch = false, lifecycleKind = '') {
+  async function evaluateAutoGame(gameId, allowSwitch = false, lifecycleKind = '', processName = '') {
     const game = autoGameCache.get(gameId);
     if (!game || !processEvents?.snapshot.ready ||
-      !resolveTrackedGameIds(settings, autoCandidateIds).includes(gameId)) {
+      !resolveAutoGameIds(settings, autoCandidateIds).includes(gameId)) {
       return false;
     }
     try {
@@ -1542,12 +1553,8 @@ module.exports = function startLeigodClean(officialRequire) {
         game,
         running,
         lifecycleKind,
+        processName,
       );
-      const automaticEnabled = resolveAutoGameIds(settings, autoCandidateIds).includes(gameId);
-      if (!automaticEnabled) {
-        clearAutoRetry(gameId);
-        return false;
-      }
       if (lifecycleTransition === 'started' && !lastOfficialState.isLogin) {
         showSystemNotification('请先登录雷神账户，再使用自动加速。', {
           title: 'LeigodClean 自动加速失败',
@@ -1598,10 +1605,12 @@ module.exports = function startLeigodClean(officialRequire) {
     return runningByName || runningByLocation;
   }
 
-  function notifyGameLifecycle(game, kind) {
+  function notifyGameLifecycle(game, kind, processName = '') {
     const title = String(game?.title ?? '').trim() || '游戏';
+    const process = normalizeProcesses([processName])[0] ?? '';
+    const status = kind === 'started' ? `${title} 已启动` : `${title} 已结束运行`;
     showSystemNotification(
-      kind === 'started' ? `检测到 ${title} 已启动。` : `${title} 已结束运行。`,
+      process ? `${status}\n进程：${process}` : status,
       { silent: true },
     );
   }
@@ -1969,8 +1978,7 @@ module.exports = function startLeigodClean(officialRequire) {
       log('Official client state ready');
       void refreshAutoAccelerationIndex({ forceCandidates: true, evaluate: true });
       void refreshTrayRecentGames();
-    } else if (lastOfficialState.ready &&
-      (settings.autoAccelerationEnabled || settings.notificationsEnabled) && gameId &&
+    } else if (lastOfficialState.ready && settings.autoAccelerationEnabled && gameId &&
       !autoCandidateIds.map(String).includes(gameId)) {
       autoCandidateIds = [gameId, ...autoCandidateIds];
       void refreshAutoAccelerationIndex({ evaluate: true });
@@ -1979,7 +1987,7 @@ module.exports = function startLeigodClean(officialRequire) {
       ((!previous.isLogin && lastOfficialState.isLogin) ||
         (previous.accStatus !== 'normal' && lastOfficialState.accStatus === 'normal') ||
         String(previous.gameId || '') !== gameId)) {
-      queueAutoEvaluation(resolveTrackedGameIds(settings, autoCandidateIds));
+      queueAutoEvaluation(resolveAutoGameIds(settings, autoCandidateIds));
     }
     if (lastOfficialState.ready && String(previous.gameId || '') !== gameId) {
       void refreshTrayRecentGames();
@@ -2021,7 +2029,6 @@ module.exports = function startLeigodClean(officialRequire) {
       automaticAcceleration: {
         globalEnabled: settings.autoAccelerationEnabled,
         configuredGameIds: resolveAutoGameIds(settings, autoCandidateIds),
-        trackedGameIds: resolveTrackedGameIds(settings, autoCandidateIds),
         candidateCount: autoCandidateIds.length,
         indexedProcessCount: autoProcessIndex.size,
         indexedLocationCount: autoGameLocations.size,

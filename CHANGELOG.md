@@ -4,6 +4,27 @@
 
 ## [未发布]
 
+## [0.7.0] - 2026-09-11
+
+### 新增
+
+- 首次启动时提供原生界面模式选择，可在常规模式与极简模式之间选择。
+
+### 改进
+
+- 游戏启动与结束通知仅面向已启用自动加速的游戏，并同时显示实际命中的进程名。
+- 重制极简模式的原生界面层级、间距、状态反馈及设置与关于窗口，不增加动画、图表或持续指标采样。
+- 加宽极简模式游戏列表及详情标题区域，并扩大账户时长控制按钮。
+- 常规模式仅在内容实际溢出时显示右侧滚动条。
+- 精简托盘账户信息，不再显示雷神客户端版本号。
+
+### 修复
+
+- 修复极简界面批量初始化时下拉框事件可能读取空列表的问题。
+- 避免极简模式在后台状态更新时反复重建游戏列表，消除列表闪烁。
+- 修复极简模式游戏副标题及账户时长按钮文字被裁切的问题。
+- 兼容官方状态数据中的整数与浮点数值，避免剩余时长和设置加载因数值类型差异失败。
+
 ## [0.6.2] - 2026-09-10
 
 ### 改进
@@ -181,7 +202,8 @@
 - 支持系统托盘、开机启动、官方界面回退入口及自动维护客户端入口补丁。
 - 建立 Windows 单文件构建、测试、校验和 GitHub Release 流程。
 
-[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.6.2...HEAD
+[未发布]: https://github.com/bunwright/leigod-clean/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/bunwright/leigod-clean/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/bunwright/leigod-clean/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/bunwright/leigod-clean/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/bunwright/leigod-clean/compare/v0.5.0...v0.6.0

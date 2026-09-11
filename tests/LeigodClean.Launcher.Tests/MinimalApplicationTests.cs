@@ -20,6 +20,17 @@ public sealed class MinimalApplicationTests
         Assert.False(MinimalMainForm.IsAccelerationConfirmed(client, 42));
     }
 
+    [Theory]
+    [InlineData(39120, 39120D)]
+    [InlineData(39120L, 39120D)]
+    [InlineData(39120.5D, 39120.5D)]
+    public void NumericStateAcceptsIntegerAndFloatingPointValues(object source, double expected)
+    {
+        var state = new JsonObject { ["totalTimeLeft"] = JsonValue.Create(source) };
+
+        Assert.Equal(expected, MinimalMainForm.GetDouble(state, "totalTimeLeft"));
+    }
+
     [Fact]
     public void ProcessEditorUsesResolvedProcessesUntilAnOverrideExists()
     {

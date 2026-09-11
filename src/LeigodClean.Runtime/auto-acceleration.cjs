@@ -24,7 +24,7 @@ class AutoEvaluationQueue {
     this._generation = 0;
   }
 
-  enqueue(gameIds, { allowSwitch = false, lifecycleKind = '' } = {}) {
+  enqueue(gameIds, { allowSwitch = false, lifecycleKind = '', processNames = new Map() } = {}) {
     const values = uniqueGameIds(gameIds);
     if (values.length === 0) {
       return this._drainPromise;
@@ -32,11 +32,14 @@ class AutoEvaluationQueue {
     if (allowSwitch) {
       // Keep process-start events separate: each real launch may switch once, while
       // aliases shared by multiple catalog entries must never cause a switch loop.
-      this._triggers.push({ gameIds: values, lifecycleKind });
+      this._triggers.push({ gameIds: values, lifecycleKind, processNames });
     } else {
       for (const gameId of values) {
         if (!this._routineInFlight.has(gameId) || lifecycleKind) {
-          this._routine.set(gameId, lifecycleKind);
+          this._routine.set(gameId, {
+            lifecycleKind,
+            processName: processNameForGame(processNames, gameId),
+          });
         }
       }
     }
@@ -76,7 +79,10 @@ class AutoEvaluationQueue {
       const trigger = this._triggers.shift();
       const allowSwitch = Boolean(trigger);
       const queued = allowSwitch
-        ? new Map(trigger.gameIds.map((gameId) => [gameId, trigger.lifecycleKind]))
+        ? new Map(trigger.gameIds.map((gameId) => [gameId, {
+          lifecycleKind: trigger.lifecycleKind,
+          processName: processNameForGame(trigger.processNames, gameId),
+        }]))
         : new Map(this._routine);
       if (!allowSwitch) {
         this._routine.clear();
@@ -88,11 +94,19 @@ class AutoEvaluationQueue {
         if (generation !== this._generation || !this._canContinue()) {
           break;
         }
-        const started = await this._evaluate(
-          gameId,
-          allowSwitch && !actionTaken,
-          queued.get(gameId),
-        );
+        const lifecycle = queued.get(gameId) ?? {};
+        const started = lifecycle.processName
+          ? await this._evaluate(
+            gameId,
+            allowSwitch && !actionTaken,
+            lifecycle.lifecycleKind,
+            lifecycle.processName,
+          )
+          : await this._evaluate(
+            gameId,
+            allowSwitch && !actionTaken,
+            lifecycle.lifecycleKind,
+          );
         actionTaken = started === true || actionTaken;
         if (allowSwitch && actionTaken) {
           break;
@@ -127,7 +141,7 @@ class GameLifecycleTracker {
     this._entries = new Map();
   }
 
-  observe(gameId, game, running, lifecycleKind = '') {
+  observe(gameId, game, running, lifecycleKind = '', processName = '') {
     const id = gameIdOf(gameId);
     if (!id) {
       return '';
@@ -135,7 +149,7 @@ class GameLifecycleTracker {
     const isRunning = running === true;
     let entry = this._entries.get(id);
     if (!entry) {
-      entry = { running: isRunning, startAnnounced: false, game, timer: null };
+      entry = { running: isRunning, startAnnounced: false, game, processName: '', timer: null };
       this._entries.set(id, entry);
     } else {
       entry.game = game;
@@ -143,18 +157,24 @@ class GameLifecycleTracker {
 
     if (isRunning) {
       this._cancelPendingEnd(entry);
+      if (processName) {
+        entry.processName = processName;
+      }
       const shouldAnnounce = lifecycleKind === 'started' &&
         (!entry.running || !entry.startAnnounced);
       entry.running = true;
       if (shouldAnnounce) {
         entry.startAnnounced = true;
-        this._onStarted(id, game);
+        this._onStarted(id, game, entry.processName);
       }
       return shouldAnnounce ? 'started' : '';
     }
 
     if (lifecycleKind !== 'stopped' || !entry.running || entry.timer) {
       return '';
+    }
+    if (processName) {
+      entry.processName = processName;
     }
     entry.timer = this._schedule(() => {
       entry.timer = null;
@@ -166,7 +186,8 @@ class GameLifecycleTracker {
           }
           entry.running = false;
           entry.startAnnounced = false;
-          this._onStopped(id, entry.game);
+          this._onStopped(id, entry.game, entry.processName);
+          entry.processName = '';
         })
         .catch(() => {});
     }, this._endDebounceMs);
@@ -201,6 +222,13 @@ function uniqueGameIds(values) {
     }
   }
   return result;
+}
+
+function processNameForGame(processNames, gameId) {
+  const value = processNames instanceof Map
+    ? processNames.get(gameId)
+    : processNames?.[gameId];
+  return String(value ?? '').trim().slice(0, 260);
 }
 
 function selectAutoEventGames(nameGameIds, locationGameIds, context = {}) {
@@ -254,17 +282,6 @@ function resolveAutoGameIds(settings = {}, discoveredGameIds = []) {
   }
 
   return result.slice(0, 500);
-}
-
-function resolveTrackedGameIds(settings = {}, discoveredGameIds = []) {
-  const automaticGameIds = resolveAutoGameIds(settings, discoveredGameIds);
-  if (settings?.notificationsEnabled !== true) {
-    return automaticGameIds;
-  }
-  return uniqueGameIds([
-    ...automaticGameIds,
-    ...(Array.isArray(discoveredGameIds) ? discoveredGameIds : []),
-  ]).slice(0, 500);
 }
 
 function defaultAutoSelection(game) {
@@ -325,6 +342,5 @@ module.exports = {
   evaluateAutoWatchState,
   GameLifecycleTracker,
   resolveAutoGameIds,
-  resolveTrackedGameIds,
   selectAutoEventGames,
 };

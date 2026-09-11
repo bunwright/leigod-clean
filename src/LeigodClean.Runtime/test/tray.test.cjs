@@ -38,7 +38,7 @@ test('tray menu presents concise account, session, time, and recent-game actions
   });
 
   const labels = template.map((item) => item.label).filter(Boolean);
-  assert.deepEqual(labels.slice(0, 2), ['LeigodClean  v0.4.0', '已登录 · 雷神 11.3.2.5']);
+  assert.deepEqual(labels.slice(0, 2), ['LeigodClean  v0.4.0', '已登录']);
   assert.ok(labels.includes('Example Game · 加速中'));
   assert.ok(labels.includes('00:01:05 · 28 ms · 丢包 0%'));
   assert.ok(labels.includes('剩余 1 小时 2 分'));
