@@ -185,6 +185,13 @@ internal sealed class BufferedGameListBox : ListBox
     }
 }
 
+internal enum NativeTrayAction
+{
+    None,
+    Restore,
+    ShowMenu,
+}
+
 internal sealed class MinimalMainForm : Form
 {
     private readonly NativeBridgeClient client;
@@ -272,10 +279,9 @@ internal sealed class MinimalMainForm : Form
         {
             Text = "LeigodClean",
             Icon = idleIcon,
-            ContextMenuStrip = trayMenu,
             Visible = !previewMode,
         };
-        notifyIcon.DoubleClick += (_, _) => RestoreWindow();
+        notifyIcon.MouseUp += OnTrayMouseUp;
 
         client.StateChanged += OnStateChanged;
         client.NotificationReceived += OnNotificationReceived;
@@ -1243,6 +1249,27 @@ internal sealed class MinimalMainForm : Form
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("退出", null, async (_, _) => await RequestExitAsync());
     }
+
+    private void OnTrayMouseUp(object? sender, MouseEventArgs eventArgs)
+    {
+        NativeTrayAction action = ResolveTrayAction(eventArgs.Button);
+        if (action == NativeTrayAction.Restore)
+        {
+            RestoreWindow();
+            return;
+        }
+        if (action == NativeTrayAction.ShowMenu)
+        {
+            trayMenu.Show(Cursor.Position);
+        }
+    }
+
+    internal static NativeTrayAction ResolveTrayAction(MouseButtons button) => button switch
+    {
+        MouseButtons.Left => NativeTrayAction.Restore,
+        MouseButtons.Right => NativeTrayAction.ShowMenu,
+        _ => NativeTrayAction.None,
+    };
 
     private IEnumerable<int> RecentGameIds()
     {

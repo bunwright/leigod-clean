@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Windows.Forms;
 using Xunit;
 
 namespace LeigodClean.Tests;
@@ -29,6 +30,14 @@ public sealed class MinimalApplicationTests
         var state = new JsonObject { ["totalTimeLeft"] = JsonValue.Create(source) };
 
         Assert.Equal(expected, MinimalMainForm.GetDouble(state, "totalTimeLeft"));
+    }
+
+    [Fact]
+    public void TrayUsesSingleLeftAndRightClicksForTheirPrimaryActions()
+    {
+        Assert.Equal(NativeTrayAction.Restore, MinimalMainForm.ResolveTrayAction(MouseButtons.Left));
+        Assert.Equal(NativeTrayAction.ShowMenu, MinimalMainForm.ResolveTrayAction(MouseButtons.Right));
+        Assert.Equal(NativeTrayAction.None, MinimalMainForm.ResolveTrayAction(MouseButtons.Middle));
     }
 
     [Fact]

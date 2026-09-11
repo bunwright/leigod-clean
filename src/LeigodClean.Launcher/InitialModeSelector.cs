@@ -43,7 +43,7 @@ internal sealed class FirstRunModeForm : Form
     private readonly Button continueButton = new()
     {
         Text = "继续",
-        Width = 116,
+        Width = 126,
         Height = 38,
         Enabled = false,
     };
@@ -61,7 +61,7 @@ internal sealed class FirstRunModeForm : Form
         ShowInTaskbar = true;
         BackColor = MinimalTheme.Canvas;
         ForeColor = MinimalTheme.Text;
-        ClientSize = new Size(820, 520);
+        ClientSize = new Size(860, 560);
 
         regularChoice = new ModeChoiceButton(
             "常规模式",
@@ -91,9 +91,9 @@ internal sealed class FirstRunModeForm : Form
             RowCount = 3,
             Padding = new Padding(28, 22, 28, 0),
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 132));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
         root.Controls.Add(BuildHeading(), 0, 0);
         root.Controls.Add(BuildChoices(), 0, 1);
         root.Controls.Add(BuildFooter(), 0, 2);
@@ -112,7 +112,7 @@ internal sealed class FirstRunModeForm : Form
         {
             Text = "选择界面模式",
             Dock = DockStyle.Top,
-            Height = 42,
+            Height = 58,
             Font = new Font(Font.FontFamily, 20F, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleLeft,
         });
@@ -120,7 +120,7 @@ internal sealed class FirstRunModeForm : Form
         {
             Text = "选择适合你的使用方式，之后可以随时在偏好设置中切换。",
             Dock = DockStyle.Bottom,
-            Height = 48,
+            Height = 56,
             ForeColor = MinimalTheme.SecondaryText,
             TextAlign = ContentAlignment.TopLeft,
         });
@@ -238,7 +238,7 @@ internal sealed class ModeChoiceButton : Button
         eventArgs.Graphics.FillPath(surface, cardPath);
         eventArgs.Graphics.DrawPath(border, cardPath);
 
-        Rectangle badgeBounds = new(card.Left + 20, card.Top + 20, 98, 28);
+        Rectangle badgeBounds = new(card.Left + 20, card.Top + 18, 132, 32);
         using GraphicsPath badgePath = RoundedRectangle(badgeBounds, 8);
         using var badgeBrush = new SolidBrush(selected ? Color.White : MinimalTheme.Canvas);
         using var badgeFont = new Font(Font, FontStyle.Bold);
@@ -257,16 +257,16 @@ internal sealed class ModeChoiceButton : Button
             eventArgs.Graphics.FillEllipse(dotBrush, dot);
         }
 
-        Rectangle titleBounds = new(card.Left + 20, card.Top + 64, card.Width - 40, 34);
+        Rectangle titleBounds = new(card.Left + 20, card.Top + 64, card.Width - 40, 44);
         using var titleFont = new Font(Font.FontFamily, 15F, FontStyle.Bold);
         TextRenderer.DrawText(eventArgs.Graphics, title, titleFont,
             titleBounds, MinimalTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
             TextFormatFlags.NoPrefix);
-        Rectangle descriptionBounds = new(card.Left + 20, card.Top + 102, card.Width - 40, 44);
+        Rectangle descriptionBounds = new(card.Left + 20, card.Top + 112, card.Width - 40, 60);
         TextRenderer.DrawText(eventArgs.Graphics, description, Font, descriptionBounds,
             MinimalTheme.SecondaryText, TextFormatFlags.Left | TextFormatFlags.Top |
             TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
-        int detailTop = card.Top + 158;
+        int detailTop = card.Top + 184;
         foreach (string detail in details.Take(3))
         {
             Rectangle marker = new(card.Left + 21, detailTop + 6, 5, 5);
